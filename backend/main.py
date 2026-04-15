@@ -1,0 +1,452 @@
+from fastapi import FastAPI, Depends, HTTPException, status, Body
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+import uuid
+from typing import List, Optional, Any
+from pydantic import BaseModel, EmailStr
+from geopy.distance import geodesic
+
+from .database import get_db, engine
+from .models import Base, User, UserRole, ParkingLand, Vehicle, Booking, BookingStatus, Notification
+from .auth import verify_password, get_password_hash, create_access_token, decode_access_token
+from fastapi.middleware.cors import CORSMiddleware
+
+# Initialize FastAPI
+app = FastAPI(title="Smart Parking System")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# OAuth2 setup
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Pydantic Schemas
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+    role: UserRole
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    role: UserRole
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class ParkingLandCreate(BaseModel):
+    name: str
+    address: str
+    latitude: float
+    longitude: float
+    total_slots: int
+    vehicle_types: List[str]
+    price_per_hour: float
+    penalty_per_hour: float
+    grace_minutes: int = 15
+    boundaries: Optional[Any] = None
+
+class ParkingLandOut(BaseModel):
+    id: int
+    name: str
+    address: str
+    latitude: float
+    longitude: float
+    boundaries: Optional[Any] = None
+    total_slots: int
+    available_slots: int
+    status: str
+    vehicle_types: List[str]
+    price_per_hour: float
+    penalty_per_hour: float
+    grace_minutes: int
+    class Config:
+        from_attributes = True
+
+class VehicleCreate(BaseModel):
+    vehicle_number: str
+    vehicle_type: str
+
+class VehicleOut(BaseModel):
+    id: int
+    vehicle_number: str
+    vehicle_type: str
+    class Config:
+        from_attributes = True
+
+class BookingOut(BaseModel):
+    id: int
+    land_id: int
+    vehicle_id: int
+    status: BookingStatus
+    reserved_at: datetime
+    checked_in_at: Optional[datetime]
+    checked_out_at: Optional[datetime]
+    total_amount: float
+    penalty_amount: float
+    payment_status: str
+    payment_method: Optional[str]
+    group_id: Optional[str] = None
+    # Navigation fields
+    land_name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    class Config:
+        from_attributes = True
+
+# Dependency to get current user
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    username: str = payload.get("sub")
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
+
+# Auth Endpoints
+@app.post("/register", response_model=UserOut)
+def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.username == user_in.username).first():
+        raise HTTPException(status_code=400, detail="Username already registered")
+    if db.query(User).filter(User.email == user_in.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_password = get_password_hash(user_in.password)
+    db_user = User(
+        username=user_in.username,
+        email=user_in.email,
+        password_hash=hashed_password,
+        role=user_in.role
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.post("/token", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
+    
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/me", response_model=UserOut)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+# Owner Dashboard Endpoints
+@app.post("/owner/lands", response_model=ParkingLandOut)
+def create_land(land_in: ParkingLandCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only owners can create parking lands")
+    
+    db_land = ParkingLand(
+        **land_in.dict(),
+        owner_id=current_user.id,
+        available_slots=land_in.total_slots,
+        status="OFFLINE"
+    )
+    db.add(db_land)
+    db.commit()
+    db.refresh(db_land)
+    return db_land
+
+@app.get("/owner/lands", response_model=List[ParkingLandOut])
+def list_owner_lands(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only owners can view their lands")
+    return db.query(ParkingLand).filter(ParkingLand.owner_id == current_user.id).all()
+
+@app.patch("/owner/lands/{land_id}/status")
+def update_land_status(land_id: int, status: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    land = db.query(ParkingLand).filter(ParkingLand.id == land_id, ParkingLand.owner_id == current_user.id).first()
+    if not land:
+        raise HTTPException(status_code=404, detail="Land not found")
+    land.status = status
+    db.commit()
+    return {"message": f"Status updated to {status}"}
+
+@app.get("/owner/bookings", response_model=List[BookingOut])
+def list_owner_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only owners can view bookings")
+    # Join with ParkingLand to filter by owner_id
+    bookings = db.query(Booking).join(ParkingLand).filter(ParkingLand.owner_id == current_user.id).all()
+    return bookings
+
+# Customer Endpoints
+@app.post("/customer/vehicles", response_model=VehicleOut)
+def add_vehicle(vehicle_in: VehicleCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can add vehicles")
+    
+    db_vehicle = Vehicle(**vehicle_in.dict(), user_id=current_user.id)
+    db.add(db_vehicle)
+    db.commit()
+    db.refresh(db_vehicle)
+    return db_vehicle
+
+@app.get("/customer/vehicles", response_model=List[VehicleOut])
+def list_customer_vehicles(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can view vehicles")
+    return db.query(Vehicle).filter(Vehicle.user_id == current_user.id).all()
+
+@app.get("/customer/bookings", response_model=List[BookingOut])
+def list_customer_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can view their bookings")
+    
+    results = db.query(Booking, ParkingLand.name, ParkingLand.latitude, ParkingLand.longitude).join(
+        ParkingLand, Booking.land_id == ParkingLand.id
+    ).filter(Booking.user_id == current_user.id).order_by(Booking.id.desc()).all()
+    
+    output = []
+    for booking, name, lat, lng in results:
+        b_dict = {c.name: getattr(booking, c.name) for c in booking.__table__.columns}
+        b_dict["land_name"] = name
+        b_dict["latitude"] = lat
+        b_dict["longitude"] = lng
+        output.append(b_dict)
+    return output
+
+@app.get("/search", response_model=List[ParkingLandOut])
+def search_parking(
+    lat: float, 
+    lng: float, 
+    radius: float = 5.0, 
+    vehicle_type: Optional[str] = None,
+    max_price: Optional[float] = None,
+    required_slots: int = 1,
+    db: Session = Depends(get_db)
+):
+    # Auto-expire reservations before search
+    expire_reservations(db)
+    
+    lands = db.query(ParkingLand).filter(ParkingLand.status == "ONLINE").all()
+    results = []
+    for land in lands:
+        if land.available_slots < required_slots:
+            continue
+        if max_price is not None and land.price_per_hour > max_price:
+            continue
+            
+        distance = geodesic((lat, lng), (land.latitude, land.longitude)).km
+        if distance <= radius:
+            if vehicle_type and vehicle_type not in land.vehicle_types:
+                continue
+            results.append(land)
+    return results
+
+def expire_reservations(db: Session):
+    expiry_time = datetime.utcnow() - timedelta(minutes=3)
+    expired = db.query(Booking).filter(
+        Booking.status == BookingStatus.RESERVED,
+        Booking.reserved_at < expiry_time
+    ).all()
+    
+    for booking in expired:
+        booking.status = BookingStatus.CANCELLED
+        # Release the slot
+        land = db.query(ParkingLand).filter(ParkingLand.id == booking.land_id).first()
+        if land:
+            land.available_slots += 1
+    db.commit()
+
+@app.post("/bookings/reserve/{land_id}")
+def reserve_slot(
+    land_id: int, 
+    vehicle_id: int, 
+    intended_duration: float = 1.0,
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can book")
+    
+    land = db.query(ParkingLand).filter(ParkingLand.id == land_id).first()
+    if not land or land.status != "ONLINE" or land.available_slots <= 0:
+        raise HTTPException(status_code=400, detail="Parking not available")
+    
+    # Allow booking if their active booking is for a different vehicle
+    active = db.query(Booking).filter(
+        Booking.user_id == current_user.id,
+        Booking.vehicle_id == vehicle_id,
+        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.ACTIVE])
+    ).first()
+    if active:
+        raise HTTPException(status_code=400, detail="This vehicle is already parked/reserved")
+
+    booking = Booking(
+        user_id=current_user.id,
+        land_id=land_id,
+        vehicle_id=vehicle_id,
+        status=BookingStatus.RESERVED,
+        intended_duration_hours=intended_duration
+    )
+    land.available_slots -= 1
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+class ReserveMultipleRequest(BaseModel):
+    vehicle_ids: List[int]
+    intended_duration: float = 1.0
+
+@app.post("/bookings/reserve-multiple/{land_id}")
+def reserve_multiple_slots(
+    land_id: int, 
+    req: ReserveMultipleRequest,
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can book")
+    
+    land = db.query(ParkingLand).filter(ParkingLand.id == land_id).first()
+    if not land or land.status != "ONLINE" or land.available_slots < len(req.vehicle_ids):
+        raise HTTPException(status_code=400, detail="Not enough available slots")
+        
+    created_bookings = []
+    group_id = str(uuid.uuid4()) # Generate a unique group token
+    for vid in req.vehicle_ids:
+        # Check if specific vehicle is actively parked
+        active = db.query(Booking).filter(
+            Booking.user_id == current_user.id,
+            Booking.vehicle_id == vid,
+            Booking.status.in_([BookingStatus.RESERVED, BookingStatus.ACTIVE])
+        ).first()
+        if active:
+            raise HTTPException(status_code=400, detail=f"Vehicle #{vid} is already active/reserved")
+
+        b = Booking(
+            user_id=current_user.id,
+            land_id=land_id,
+            vehicle_id=vid,
+            status=BookingStatus.RESERVED,
+            intended_duration_hours=req.intended_duration,
+            group_id=group_id
+        )
+        db.add(b)
+        created_bookings.append(b)
+        
+    land.available_slots -= len(req.vehicle_ids)
+    db.commit()
+    return [{
+        "id": b.id, 
+        "vehicle_id": b.vehicle_id, 
+        "group_id": group_id,
+        "land_name": land.name,
+        "latitude": land.latitude,
+        "longitude": land.longitude
+    } for b in created_bookings]
+
+@app.post("/bookings/{booking_id}/check-in")
+def check_in(booking_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id, Booking.user_id == current_user.id).first()
+    if not booking or booking.status != BookingStatus.RESERVED:
+        raise HTTPException(status_code=400, detail="Invalid booking status for check-in")
+    
+    # In a real app, verify geo-radius here. For now, we assume user is there.
+    # The requirement says owner must approve. So we change status to "PENDING_CHECK_IN" or similar?
+    # Actually models.py doesn't have PENDING_CHECK_IN. I'll use a Notification for owner.
+    
+    notification = Notification(
+        user_id=booking.land.owner_id,
+        message=f"Check-in request for Booking #{booking.id} by {current_user.username}"
+    )
+    db.add(notification)
+    db.commit()
+    return {"message": "Check-in requested. Waiting for owner approval."}
+
+@app.post("/owner/approve-check-in/{booking_id}")
+def approve_check_in(booking_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking or booking.land.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Booking not found or unauthorized")
+    
+    booking.status = BookingStatus.ACTIVE
+    booking.checked_in_at = func.now()
+    db.commit()
+    return {"message": "User checked in successfully"}
+
+@app.post("/bookings/{booking_id}/checkout")
+def checkout(booking_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id, Booking.user_id == current_user.id).first()
+    if not booking or booking.status != BookingStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Booking is not active")
+    
+    now = datetime.utcnow()
+    booking.checked_out_at = now
+    
+    # Calculate fee
+    duration_delta = now - booking.checked_in_at.replace(tzinfo=None)
+    actual_hours = duration_delta.total_seconds() / 3600
+    
+    base_fee = actual_hours * booking.land.price_per_hour
+    
+    # Penalty calculation
+    penalty = 0.0
+    exceeded_hours = actual_hours - booking.intended_duration_hours
+    if exceeded_hours > (booking.land.grace_minutes / 60.0):
+        penalty = exceeded_hours * booking.land.penalty_per_hour
+    
+    booking.total_amount = base_fee + penalty
+    booking.penalty_amount = penalty
+    db.commit()
+    return {"total_amount": booking.total_amount, "penalty": penalty}
+
+@app.post("/bookings/{booking_id}/pay")
+def pay(booking_id: int, method: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id, Booking.user_id == current_user.id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    booking.payment_method = method
+    if method == "ONLINE":
+        booking.payment_status = "PAID"
+        booking.status = BookingStatus.COMPLETED
+        booking.land.available_slots += 1
+    else:
+        # Cash needs owner confirmation
+        notification = Notification(
+            user_id=booking.land.owner_id,
+            message=f"Cash payment pending for Booking #{booking.id}"
+        )
+        db.add(notification)
+    
+    db.commit()
+    return {"message": "Payment processed" if method == "ONLINE" else "Waiting for owner cash confirmation"}
+
+@app.post("/owner/confirm-payment/{booking_id}")
+def confirm_payment(booking_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking or booking.land.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Booking not found or unauthorized")
+    
+    booking.payment_status = "PAID"
+    booking.status = BookingStatus.COMPLETED
+    booking.land.available_slots += 1
+    db.commit()
+    return {"message": "Payment confirmed and slot released"}
+
+@app.get("/notifications")
+def get_notifications(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(Notification).filter(Notification.user_id == current_user.id, Notification.is_read == False).all()
