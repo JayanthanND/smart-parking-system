@@ -21,6 +21,8 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.CUSTOMER)
+    active_nav_land_id = Column(Integer, ForeignKey("parking_lands.id"), nullable=True)
+    is_nav_fullscreen = Column(Boolean, default=False)
     
     hands = relationship("ParkingLand", back_populates="owner")
     vehicles = relationship("Vehicle", back_populates="owner")

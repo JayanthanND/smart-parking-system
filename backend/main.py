@@ -39,6 +39,8 @@ class UserOut(BaseModel):
     username: str
     email: EmailStr
     role: UserRole
+    active_nav_land_id: Optional[int] = None
+    is_nav_fullscreen: bool = False
     class Config:
         from_attributes = True
 
@@ -57,6 +59,10 @@ class ParkingLandCreate(BaseModel):
     penalty_per_hour: float
     grace_minutes: int = 15
     boundaries: Optional[Any] = None
+
+class NavStateUpdate(BaseModel):
+    active_nav_land_id: Optional[int] = None
+    is_nav_fullscreen: bool = False
 
 class ParkingLandOut(BaseModel):
     id: int
@@ -149,6 +155,16 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @app.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+@app.post("/customer/navigation-state")
+def update_nav_state(state: NavStateUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can set navigation state")
+    
+    current_user.active_nav_land_id = state.active_nav_land_id
+    current_user.is_nav_fullscreen = state.is_nav_fullscreen
+    db.commit()
+    return {"status": "updated"}
 
 # Owner Dashboard Endpoints
 @app.post("/owner/lands", response_model=ParkingLandOut)

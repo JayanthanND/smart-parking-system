@@ -65,8 +65,47 @@ export default function CustomerPanel() {
   const [routeData, setRouteData] = useState(null); // { instructions, coordinates, summary }
   const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
+  const [shouldGroup, setShouldGroup] = useState(true); // New: Optional grouping preference
 
   useEffect(() => { fetchVehicles(); fetchActiveBookings(); locateUser(); }, []);
+
+  // Session Restoration Logic: Restore navigation mission if it exists in DB
+  useEffect(() => {
+    if (user && user.active_nav_land_id && !navigatingTo) {
+      // Find the booking/facility corresponding to the saved ID
+      const restoreDest = async () => {
+         try {
+           const { data } = await authAxios.get('/customer/bookings');
+           const activeTarget = data.find(b => b.land_id === user.active_nav_land_id);
+           if (activeTarget) {
+              setNavigatingTo({
+                lat: activeTarget.latitude,
+                lng: activeTarget.longitude,
+                name: activeTarget.land_name
+              });
+              setIsMapFullscreen(user.is_nav_fullscreen);
+              // Start tracking automatically
+              const id = navigator.geolocation.watchPosition(
+                (pos) => setUserLoc([pos.coords.latitude, pos.coords.longitude]),
+                (err) => console.error(err),
+                { enableHighAccuracy: true }
+              );
+              setWatchId(id);
+           }
+         } catch (err) { console.error("Session restoration failed", err); }
+      };
+      restoreDest();
+    }
+  }, [user]);
+
+  const syncNavState = async (landId, isFullscreen) => {
+    try {
+      await authAxios.post('/customer/navigation-state', {
+        active_nav_land_id: landId,
+        is_nav_fullscreen: isFullscreen
+      });
+    } catch (err) { console.error("Navigation sync failed", err); }
+  };
 
   const locateUser = () => {
     if (navigator.geolocation) {
@@ -77,9 +116,10 @@ export default function CustomerPanel() {
     }
   };
 
-  const startLiveTracking = (dest) => {
+  const startLiveTracking = (dest, landId) => {
     setNavigatingTo(dest);
     setIsMapFullscreen(true); // Auto-trigger fullscreen focus mode
+    syncNavState(landId, true); // Persist to DB
     const id = navigator.geolocation.watchPosition(
       (pos) => setUserLoc([pos.coords.latitude, pos.coords.longitude]),
       (err) => console.error(err),
@@ -94,6 +134,7 @@ export default function CustomerPanel() {
     setNavigatingTo(null);
     setRouteData(null);
     setCurrentInstructionIndex(0);
+    syncNavState(null, false); // Clear from DB
   };
 
   // Guidance Logic: Proximity detection to auto-advance instructions
@@ -250,9 +291,20 @@ export default function CustomerPanel() {
   const reserveMultiple = async (landId) => {
     if (selectedVehicleIds.length === 0) return alert("Select at least one vehicle from your fleet.");
     try {
-      const payload = { vehicle_ids: selectedVehicleIds, intended_duration: parseFloat(filterForm.intended_duration) };
-      await authAxios.post(`/bookings/reserve-multiple/${landId}`, payload);
-      alert(`Reserved slots for ${selectedVehicleIds.length} vehicle(s)! Managing as a group.`);
+      if (shouldGroup && selectedVehicleIds.length > 1) {
+        const payload = { vehicle_ids: selectedVehicleIds, intended_duration: parseFloat(filterForm.intended_duration) };
+        await authAxios.post(`/bookings/reserve-multiple/${landId}`, payload);
+        alert(`Unified reservation secured for ${selectedVehicleIds.length} vehicles!`);
+      } else {
+        // Individual bookings
+        await Promise.all(selectedVehicleIds.map(vId => 
+          authAxios.post(`/bookings/reserve/${landId}?vehicle_id=${vId}&intended_duration=${filterForm.intended_duration}`)
+        ));
+        alert(selectedVehicleIds.length > 1 
+          ? `Created ${selectedVehicleIds.length} independent reservations.` 
+          : "Reservation secured!");
+      }
+      setSelectedVehicleIds([]);
       fetchActiveBookings();
       handleSearch();
     } catch(err) {
@@ -389,10 +441,14 @@ export default function CustomerPanel() {
               flexDirection: 'column', 
               gap: '0.8rem'
           }}>
-             <button className="glass-panel d-flex align-center justify-center" style={{width: 48, height: 48, borderRadius: '50%', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', boxShadow: '0 4px 15px rgba(0,0,0,0.3)'}} onClick={() => setIsMapFullscreen(!isMapFullscreen)} title={isMapFullscreen ? "Exit Focus" : "Focus Mode"}>
+             <button className="glass-panel" style={{width: 48, height: 48, borderRadius: '50%', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', boxShadow: '0 4px 15px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center'}} onClick={() => {
+                const nextState = !isMapFullscreen;
+                setIsMapFullscreen(nextState);
+                if (navigatingTo) syncNavState(user.active_nav_land_id, nextState);
+             }} title={isMapFullscreen ? "Exit Focus" : "Focus Mode"}>
                 {isMapFullscreen ? <Minimize size={20}/> : <Maximize size={20}/>}
              </button>
-             <button className="glass-panel d-flex align-center justify-center" style={{width: 48, height: 48, borderRadius: '50%', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', boxShadow: '0 4px 15px rgba(0,0,0,0.3)'}} onClick={locateUser} title="Locate Me">
+             <button className="glass-panel" style={{width: 48, height: 48, borderRadius: '50%', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', boxShadow: '0 4px 15px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center'}} onClick={locateUser} title="Jump to My Location">
                 <Crosshair size={20}/>
              </button>
           </div>
@@ -471,7 +527,7 @@ export default function CustomerPanel() {
                 {group.step === 'RESERVED' && (
                   <div className="d-flex gap-2">
                     <button className="btn-action w-full" onClick={() => groupCheckIn(group)}><Navigation size={18}/> Verify Group Entry</button>
-                    <button className="btn-action btn-secondary" title="Navigate Lively" onClick={() => startLiveTracking({ lat: group.bookings[0].latitude, lng: group.bookings[0].longitude, name: group.bookings[0].land_name })}>
+                    <button className="btn-action btn-secondary" title="Navigate Lively" onClick={() => startLiveTracking({ lat: group.bookings[0].latitude, lng: group.bookings[0].longitude, name: group.bookings[0].land_name }, group.land_id)}>
                       <Activity size={18}/>
                     </button>
                   </div>
@@ -515,6 +571,16 @@ export default function CustomerPanel() {
           <p style={{fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem'}}>Select exactly which vehicles to park simultaneously.</p>
           
           <div className="timeline-feed mt-4" style={{paddingLeft: 0, gap: '0.5rem'}}>
+            <div className="glass-card mb-2" style={{padding: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.2)'}}>
+               <div>
+                  <div style={{fontWeight: 700, fontSize: '0.9rem'}}>Unified Group Session</div>
+                  <div style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>Combine vehicles into one payment/control</div>
+               </div>
+               <div onClick={() => setShouldGroup(!shouldGroup)} style={{width: 44, height: 24, borderRadius: 12, background: shouldGroup ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)', cursor: 'pointer', position: 'relative', transition: '0.3s'}}>
+                  <div style={{width: 18, height: 18, borderRadius: '50%', background: 'white', position: 'absolute', top: 3, left: shouldGroup ? 23 : 3, transition: '0.3s'}}/>
+               </div>
+            </div>
+
             {vehicles.map((v, idx) => {
               const isSelected = selectedVehicleIds.includes(v.id);
               return (
