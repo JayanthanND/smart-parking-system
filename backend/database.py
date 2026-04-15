@@ -4,10 +4,14 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from project root regardless of where script is run
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+load_dotenv(dotenv_path=env_path)
 
-# Default to SQLite if DATABASE_URL is not set for easier local development
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./smart_parking.db")
+# Default to SQLite only if DATABASE_URL is not set for easier local development
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    DATABASE_URL = "sqlite:///./smart_parking.db"
 
 # Use pool_pre_ping for Neon/Serverless DBs to avoid connection issues
 if DATABASE_URL.startswith("postgresql"):

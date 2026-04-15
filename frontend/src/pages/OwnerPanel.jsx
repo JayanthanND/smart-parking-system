@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Building2, Plus, RefreshCw, Layers, CheckCircle, ShieldCheck, MapPin, Activity } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Layers, CheckCircle, ShieldCheck, MapPin, Activity, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useSnackbar } from '../components/Snackbar';
 import { MapContainer, TileLayer, Marker, Polygon, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -40,6 +41,7 @@ const MapPlotter = ({ onBoundariesComplete }) => {
 export default function OwnerPanel() {
   const { authAxios, user } = useAuth();
   const navigate = useNavigate();
+  const { showSnackbar } = useSnackbar();
   
   const [lands, setLands] = useState([]);
   const [bookings, setBookings] = useState([]);
@@ -81,16 +83,30 @@ export default function OwnerPanel() {
         vehicle_types: typeof landForm.vehicle_types === 'string' ? landForm.vehicle_types.split(',') : landForm.vehicle_types 
       });
       setIsAdding(false);
+      showSnackbar("New Facility Operational!", "success");
       fetchData();
-    } catch(err) { alert('Error adding facility'); }
+    } catch(err) { showSnackbar("Deployment failed", "error"); }
   };
 
   const toggleStatus = async (id, currentStatus) => {
     const newStatus = currentStatus === 'ONLINE' ? 'OFFLINE' : 'ONLINE';
     try {
       await authAxios.patch(`/owner/lands/${id}/status?status=${newStatus}`);
+      showSnackbar(`Facility status: ${newStatus}`, "info");
       fetchData();
-    } catch(err) { alert('Status Update Failed'); }
+    } catch(err) { showSnackbar("Status update failed", "error"); }
+  };
+
+  const handleDeleteLand = async (landId, landName) => {
+    if (!window.confirm(`Are you sure you want to PERMANENTLY delete "${landName}"? This cannot be undone.`)) return;
+    
+    try {
+      await authAxios.delete(`/owner/lands/${landId}`);
+      showSnackbar("Parking facility deleted successfully", "success");
+      fetchData();
+    } catch (err) {
+      showSnackbar(err.response?.data?.detail || "Failed to delete facility", "error");
+    }
   };
 
   const getMetrics = () => {
@@ -195,7 +211,18 @@ export default function OwnerPanel() {
                   <h3 className="card-title">{land.name}</h3>
                   <div style={{fontSize: '0.8rem', color: 'var(--text-secondary)'}}><MapPin size={12}/> {land.address}</div>
                 </div>
-                <span className={`card-badge ${land.status === 'ONLINE' ? 'badge-online' : 'badge-offline'}`}>{land.status}</span>
+                <div className="d-flex align-center gap-2">
+                  <span className={`card-badge ${land.status === 'ONLINE' ? 'badge-online' : 'badge-offline'}`}>{land.status}</span>
+                  <button 
+                    onClick={() => handleDeleteLand(land.id, land.name)}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', borderRadius: '4px', transition: '0.2s', display: 'flex', alignItems: 'center' }}
+                    onMouseOver={e => e.currentTarget.style.color = '#ef4444'}
+                    onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}
+                    title="Delete Facility"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
               
               <div className="card-body">
@@ -227,14 +254,31 @@ export default function OwnerPanel() {
               </tr>
             </thead>
             <tbody>
-              {bookings.map(b => {
+              {[...bookings].sort((a, b) => {
+                const statusPriority = { 'ACTIVE': 1, 'RESERVED': 2, 'COMPLETED': 3, 'CANCELLED': 4 };
+                const sA = typeof a.status === 'number' ? (a.status===4?'COMPLETED':a.status===3?'CANCELLED':a.status===2?'ACTIVE':a.status===1?'RESERVED':a.status) : a.status;
+                const sB = typeof b.status === 'number' ? (b.status===4?'COMPLETED':b.status===3?'CANCELLED':b.status===2?'ACTIVE':b.status===1?'RESERVED':b.status) : b.status;
+                
+                if (statusPriority[sA] !== statusPriority[sB]) {
+                  return statusPriority[statusPriority[sA] ? sA : 'CANCELLED'] - statusPriority[statusPriority[sB] ? sB : 'CANCELLED'];
+                }
+                return b.id - a.id;
+              }).map(b => {
                 let statusLabel = typeof b.status === 'number' ? (b.status===4?'COMPLETED':b.status===3?'CANCELLED':b.status===2?'ACTIVE':b.status===1?'RESERVED':b.status) : b.status;
                 return (
                   <tr key={b.id} style={{borderBottom: '1px solid var(--surface-border)'}}>
                     <td style={{padding: '0.75rem'}}>#{b.id}</td>
                     <td style={{padding: '0.75rem'}}>{b.land_id}</td>
                     <td style={{padding: '0.75rem'}}>{b.vehicle_id}</td>
-                    <td style={{padding: '0.75rem'}}>{statusLabel}</td>
+                    <td style={{
+                      padding: '0.75rem', 
+                      color: statusLabel === 'ACTIVE' ? 'var(--status-green)' : 
+                             statusLabel === 'CANCELLED' ? 'var(--status-red)' : 
+                             statusLabel === 'COMPLETED' ? 'var(--text-secondary)' : 'inherit', 
+                      fontWeight: (statusLabel === 'ACTIVE' || statusLabel === 'CANCELLED') ? 700 : 'normal'
+                    }}>
+                      {statusLabel}
+                    </td>
                     <td style={{padding: '0.75rem'}}>₹{b.total_amount?.toFixed(2)||'0.00'}</td>
                   </tr>
                 );

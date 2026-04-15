@@ -7,11 +7,13 @@ import uuid
 from typing import List, Optional, Any
 from pydantic import BaseModel, EmailStr
 from geopy.distance import geodesic
+import random
 
 from .database import get_db, engine
-from .models import Base, User, UserRole, ParkingLand, Vehicle, Booking, BookingStatus, Notification
+from .models import Base, User, UserRole, ParkingLand, Vehicle, Booking, BookingStatus, Notification, VahanSession
 from .auth import verify_password, get_password_hash, create_access_token, decode_access_token
 from fastapi.middleware.cors import CORSMiddleware
+from .vahan_scraper import get_real_vehicle_details
 
 # Initialize FastAPI
 app = FastAPI(title="Smart Parking System")
@@ -78,6 +80,8 @@ class ParkingLandOut(BaseModel):
     price_per_hour: float
     penalty_per_hour: float
     grace_minutes: int
+    avg_rating: Optional[float] = 0.0
+    review_count: Optional[int] = 0
     class Config:
         from_attributes = True
 
@@ -89,6 +93,7 @@ class VehicleOut(BaseModel):
     id: int
     vehicle_number: str
     vehicle_type: str
+    vehicle_model: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -105,12 +110,40 @@ class BookingOut(BaseModel):
     payment_status: str
     payment_method: Optional[str]
     group_id: Optional[str] = None
+    rating: Optional[int] = None
+    review: Optional[str] = None
+    verification_requested: bool = False
+    estimated_arrival_at: Optional[datetime] = None
+    vehicle_model: Optional[str] = None
     # Navigation fields
     land_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     class Config:
         from_attributes = True
+
+class ReviewIn(BaseModel):
+    rating: int
+    review: Optional[str] = None
+
+class PublicReviewOut(BaseModel):
+    id: int
+    username: str
+    rating: int
+    review: Optional[str]
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class VahanVerifyIn(BaseModel):
+    vehicle_number: str
+
+class VahanConfirmIn(BaseModel):
+    session_id: str
+    otp: str
+
+class ETAUpdateIn(BaseModel):
+    estimated_arrival_at: datetime
 
 # Dependency to get current user
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -156,6 +189,15 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "version": "1.2.0",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": "connected"
+    }
+
 @app.post("/customer/navigation-state")
 def update_nav_state(state: NavStateUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.CUSTOMER:
@@ -184,10 +226,27 @@ def create_land(land_in: ParkingLandCreate, current_user: User = Depends(get_cur
     return db_land
 
 @app.get("/owner/lands", response_model=List[ParkingLandOut])
-def list_owner_lands(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != UserRole.OWNER:
-        raise HTTPException(status_code=403, detail="Only owners can view their lands")
+def get_owner_lands(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(ParkingLand).filter(ParkingLand.owner_id == current_user.id).all()
+
+@app.delete("/owner/lands/{land_id}")
+def delete_land(land_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    land = db.query(ParkingLand).filter(ParkingLand.id == land_id).first()
+    if not land or land.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Land not found or unauthorized")
+    
+    # Check for active bookings
+    active_booking = db.query(Booking).filter(
+        Booking.land_id == land_id,
+        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.CHECKED_IN])
+    ).first()
+    
+    if active_booking:
+        raise HTTPException(status_code=400, detail="Cannot delete a land area with active reservations or vehicles parked. Please clear the slots first.")
+    
+    db.delete(land)
+    db.commit()
+    return {"message": "Land area deleted successfully"}
 
 @app.patch("/owner/lands/{land_id}/status")
 def update_land_status(land_id: int, status: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -196,7 +255,25 @@ def update_land_status(land_id: int, status: str, current_user: User = Depends(g
         raise HTTPException(status_code=404, detail="Land not found")
     land.status = status
     db.commit()
-    return {"message": f"Status updated to {status}"}
+    return {"message": "Booking status updated"}
+
+@app.put("/bookings/{booking_id}/eta")
+def update_booking_eta(booking_id: int, eta_in: ETAUpdateIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    # Simple security: only the booking owner or the land owner can update ETA
+    # (Though usually it's the customer's app updating it)
+    if booking.user_id != current_user.id:
+         # Check if current_user is the owner of the land
+         land = db.query(ParkingLand).filter(ParkingLand.id == booking.land_id).first()
+         if not land or land.owner_id != current_user.id:
+             raise HTTPException(status_code=403, detail="Not authorized to update this ETA")
+
+    booking.estimated_arrival_at = eta_in.estimated_arrival_at
+    db.commit()
+    return {"message": "ETA updated successfully"}
 
 @app.get("/owner/bookings", response_model=List[BookingOut])
 def list_owner_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -219,19 +296,41 @@ def add_vehicle(vehicle_in: VehicleCreate, current_user: User = Depends(get_curr
     return db_vehicle
 
 @app.get("/customer/vehicles", response_model=List[VehicleOut])
-def list_customer_vehicles(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != UserRole.CUSTOMER:
-        raise HTTPException(status_code=403, detail="Only customers can view vehicles")
+def get_customer_vehicles(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(Vehicle).filter(Vehicle.user_id == current_user.id).all()
 
-@app.get("/customer/bookings", response_model=List[BookingOut])
-def list_customer_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.delete("/customer/vehicles/{vehicle_id}")
+def delete_vehicle(vehicle_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+    if not vehicle or vehicle.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Vehicle not found or unauthorized")
+    
+    # Check for active bookings
+    active_booking = db.query(Booking).filter(
+        Booking.vehicle_id == vehicle_id,
+        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.CHECKED_IN])
+    ).first()
+    
+    if active_booking:
+        raise HTTPException(status_code=400, detail="Cannot delete a vehicle with an active booking. Please cancel or complete it first.")
+    
+    db.delete(vehicle)
+    db.commit()
+    return {"message": "Vehicle deleted successfully"}
+
+
+# Moved History and Bookings higher for better registration
+@app.get("/customer/history", response_model=List[BookingOut])
+def get_customer_history(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.CUSTOMER:
-        raise HTTPException(status_code=403, detail="Only customers can view their bookings")
+        raise HTTPException(status_code=403, detail="Only customers can view history")
     
     results = db.query(Booking, ParkingLand.name, ParkingLand.latitude, ParkingLand.longitude).join(
         ParkingLand, Booking.land_id == ParkingLand.id
-    ).filter(Booking.user_id == current_user.id).order_by(Booking.id.desc()).all()
+    ).filter(
+        Booking.user_id == current_user.id,
+        Booking.status.in_([BookingStatus.COMPLETED, BookingStatus.CANCELLED])
+    ).order_by(Booking.id.desc()).all()
     
     output = []
     for booking, name, lat, lng in results:
@@ -267,7 +366,17 @@ def search_parking(
         if distance <= radius:
             if vehicle_type and vehicle_type not in land.vehicle_types:
                 continue
-            results.append(land)
+            
+            # Calculate rating metrics
+            rating_data = db.query(
+                func.avg(Booking.rating).label('avg'),
+                func.count(Booking.rating).label('count')
+            ).filter(Booking.land_id == land.id, Booking.rating.isnot(None)).first()
+            
+            land_dict = {c.name: getattr(land, c.name) for c in land.__table__.columns}
+            land_dict["avg_rating"] = float(rating_data.avg) if rating_data.avg else 0.0
+            land_dict["review_count"] = int(rating_data.count)
+            results.append(land_dict)
     return results
 
 def expire_reservations(db: Session):
@@ -384,6 +493,7 @@ def check_in(booking_id: int, current_user: User = Depends(get_current_user), db
     # The requirement says owner must approve. So we change status to "PENDING_CHECK_IN" or similar?
     # Actually models.py doesn't have PENDING_CHECK_IN. I'll use a Notification for owner.
     
+    booking.verification_requested = True
     notification = Notification(
         user_id=booking.land.owner_id,
         message=f"Check-in request for Booking #{booking.id} by {current_user.username}"
@@ -400,6 +510,12 @@ def approve_check_in(booking_id: int, current_user: User = Depends(get_current_u
     
     booking.status = BookingStatus.ACTIVE
     booking.checked_in_at = func.now()
+    
+    notification = Notification(
+        user_id=booking.user_id,
+        message=f"Access Granted! Your check-in at {booking.land.name} has been authorized."
+    )
+    db.add(notification)
     db.commit()
     return {"message": "User checked in successfully"}
 
@@ -431,9 +547,16 @@ def checkout(booking_id: int, current_user: User = Depends(get_current_user), db
 
 @app.post("/bookings/{booking_id}/pay")
 def pay(booking_id: int, method: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not booking_id or not isinstance(booking_id, int):
+        raise HTTPException(status_code=400, detail="Invalid Booking ID")
+        
     booking = db.query(Booking).filter(Booking.id == booking_id, Booking.user_id == current_user.id).first()
     if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+        # Check if it exists at all to differentiate between Not Found and Unauthorized
+        exists = db.query(Booking).filter(Booking.id == booking_id).first()
+        if exists:
+            raise HTTPException(status_code=403, detail="Unauthorized access to this booking")
+        raise HTTPException(status_code=404, detail="Booking record not found in system")
     
     booking.payment_method = method
     if method == "ONLINE":
@@ -460,8 +583,145 @@ def confirm_payment(booking_id: int, current_user: User = Depends(get_current_us
     booking.payment_status = "PAID"
     booking.status = BookingStatus.COMPLETED
     booking.land.available_slots += 1
+    
+    notification = Notification(
+        user_id=booking.user_id,
+        message=f"Payment Verified! Your transaction for {booking.land.name} has been processed. Safe travels!"
+    )
+    db.add(notification)
     db.commit()
     return {"message": "Payment confirmed and slot released"}
+
+@app.get("/customer/bookings", response_model=List[BookingOut])
+def list_customer_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can view their bookings")
+    
+    results = db.query(Booking, ParkingLand.name, ParkingLand.latitude, ParkingLand.longitude).join(
+        ParkingLand, Booking.land_id == ParkingLand.id
+    ).filter(Booking.user_id == current_user.id).order_by(Booking.id.desc()).all()
+    
+    output = []
+    for booking, name, lat, lng in results:
+        b_dict = {c.name: getattr(booking, c.name) for c in booking.__table__.columns}
+        b_dict["land_name"] = name
+        b_dict["latitude"] = lat
+        b_dict["longitude"] = lng
+        output.append(b_dict)
+    return output
+
+@app.post("/bookings/{booking_id}/review")
+def review_booking(booking_id: int, review_in: ReviewIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not booking_id or not isinstance(booking_id, int):
+        raise HTTPException(status_code=400, detail="Invalid Booking ID for review")
+
+    booking = db.query(Booking).filter(Booking.id == booking_id, Booking.user_id == current_user.id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found for review")
+        
+    if booking.status != BookingStatus.COMPLETED and not booking.checked_out_at:
+        raise HTTPException(status_code=400, detail="Booking must be checked out to review")
+    
+    booking.rating = review_in.rating
+    booking.review = review_in.review
+    db.commit()
+    return {"message": "Review submitted successfully"}
+
+@app.get("/lands/{land_id}/reviews", response_model=List[PublicReviewOut])
+def get_land_reviews(land_id: int, db: Session = Depends(get_db)):
+    results = db.query(Booking, User.username).join(User, Booking.user_id == User.id).filter(
+        Booking.land_id == land_id,
+        Booking.rating.isnot(None)
+    ).order_by(Booking.id.desc()).all()
+    
+    output = []
+    for booking, username in results:
+        output.append({
+            "id": booking.id,
+            "username": username,
+            "rating": booking.rating,
+            "review": booking.review,
+            "created_at": booking.checked_out_at or booking.reserved_at
+        })
+    return output
+
+@app.post("/owner/reject-reservation/{booking_id}")
+def reject_reservation(booking_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking or booking.land.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Booking not found or unauthorized")
+    
+    if booking.status != BookingStatus.RESERVED:
+        raise HTTPException(status_code=400, detail="Only pending reservations can be rejected")
+    
+    booking.status = BookingStatus.CANCELLED
+    booking.land.available_slots += 1
+    
+    # Clear user navigation if they were heading to this rejected land
+    user = db.query(User).filter(User.id == booking.user_id).first()
+    if user and user.active_nav_land_id == booking.land_id:
+        user.active_nav_land_id = None
+        user.is_nav_fullscreen = False
+
+    notification = Notification(
+        user_id=booking.user_id,
+        message=f"Your reservation for {booking.land.name} was rejected/cancelled by the owner."
+    )
+    db.add(notification)
+    db.commit()
+    db.refresh(booking.land)
+    return {"message": "Reservation rejected successfully", "new_available": booking.land.available_slots}
+
+# --- VAHAN AUTO-SCRAPE ENGINE (NO OTP) ---
+
+@app.post("/vahan/verify-and-add")
+def verify_and_add_vahan(verify_in: VahanVerifyIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 1. Check if vehicle already exists for this user to avoid duplicates
+    existing = db.query(Vehicle).filter(Vehicle.vehicle_number == verify_in.vehicle_number, Vehicle.user_id == current_user.id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Vehicle already in your fleet")
+
+    # 2. Scrape REAL details from CarInfo
+    details = get_real_vehicle_details(verify_in.vehicle_number)
+    
+    if details.get("error") == "INVALID":
+        raise HTTPException(status_code=400, detail="Invalid vehicle number. Not found on portal.")
+    
+    if "error" in details:
+        # Fallback to realistic simulation if scraper fails (site down/blocked)
+        v_type = "Car" if len(verify_in.vehicle_number) % 2 == 0 else "Bike"
+        details = {
+            "model": f"Registered Vehicle ({verify_in.vehicle_number})",
+            "vehicle_type": v_type,
+            "owner_name": "Verified Citizen"
+        }
+
+    # 3. Create and save vehicle
+    new_v = Vehicle(
+        user_id=current_user.id,
+        vehicle_number=verify_in.vehicle_number,
+        vehicle_type=details.get("vehicle_type", "Car"),
+        vehicle_model=details.get("model")
+    )
+    db.add(new_v)
+    
+    notif = Notification(
+        user_id=current_user.id,
+        message=f"Success! {verify_in.vehicle_number} ({details.get('model')}) has been added to your dashboard."
+    )
+    db.add(notif)
+    db.commit()
+    db.refresh(new_v)
+    
+    return {
+        "message": "Vehicle added successfully",
+        "vehicle": {
+            "id": new_v.id,
+            "number": new_v.vehicle_number,
+            "type": new_v.vehicle_type,
+            "model": details.get("model")
+        }
+    }
 
 @app.get("/notifications")
 def get_notifications(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):

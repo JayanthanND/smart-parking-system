@@ -79,6 +79,7 @@ a {
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-soft);
+  padding: 1.5rem;
 }
 
 .glass-card {
@@ -88,6 +89,7 @@ a {
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
+  padding: 1.5rem;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -414,3 +416,58 @@ a {
 .text-center { text-align: center; }
 .text-danger { color: var(--status-red); }
 .text-success { color: var(--status-green); }
+/* Snackbar Notifications */
+.snackbar-container {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+
+.snackbar-item {
+  pointer-events: auto;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: var(--shadow-soft);
+  min-width: 320px;
+  max-width: 480px;
+  animation: snackbarSlideUp 0.3s ease-out;
+  cursor: pointer;
+}
+
+.snackbar-item.success { border-left: 4px solid var(--status-green); }
+.snackbar-item.error { border-left: 4px solid var(--status-red); }
+.snackbar-item.warning { border-left: 4px solid var(--status-yellow); }
+.snackbar-item.info { border-left: 4px solid var(--accent-primary); }
+
+.snackbar-message {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+@keyframes snackbarSlideUp {
+  from { transform: translateY(100%) scale(0.9); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@media (max-width: 768px) {
+  .snackbar-container {
+    bottom: 1rem;
+    width: 90%;
+  }
+  .snackbar-item {
+    min-width: 0;
+    width: 100%;
+  }
+}

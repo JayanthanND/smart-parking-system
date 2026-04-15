@@ -24,7 +24,8 @@ class User(Base):
     active_nav_land_id = Column(Integer, ForeignKey("parking_lands.id"), nullable=True)
     is_nav_fullscreen = Column(Boolean, default=False)
     
-    hands = relationship("ParkingLand", back_populates="owner")
+    hands = relationship("ParkingLand", back_populates="owner", foreign_keys="ParkingLand.owner_id")
+    active_navigation = relationship("ParkingLand", foreign_keys=[active_nav_land_id])
     vehicles = relationship("Vehicle", back_populates="owner")
     bookings = relationship("Booking", back_populates="user")
 
@@ -46,7 +47,7 @@ class ParkingLand(Base):
     boundaries = Column(JSON, nullable=True) # GeoJSON style or array of 4 objects
     
     
-    owner = relationship("User", back_populates="hands")
+    owner = relationship("User", back_populates="hands", foreign_keys=[owner_id])
     bookings = relationship("Booking", back_populates="land")
 
 class Vehicle(Base):
@@ -55,6 +56,7 @@ class Vehicle(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     vehicle_number = Column(String, unique=True, nullable=False)
     vehicle_type = Column(String, nullable=False)
+    vehicle_model = Column(String, nullable=True) # e.g. "Honda City"
     
     owner = relationship("User", back_populates="vehicles")
     bookings = relationship("Booking", back_populates="vehicle")
@@ -77,6 +79,18 @@ class Booking(Base):
     payment_status = Column(String, default="PENDING") # PENDING, PAID
     payment_method = Column(String, nullable=True) # ONLINE, CASH
     group_id = Column(String, nullable=True) # For grouping multiple vehicles together
+    estimated_arrival_at = Column(DateTime(timezone=True), nullable=True) # Computed ETA
+    
+    # Post-stay feedback
+    rating = Column(Integer, nullable=True)
+    review = Column(String, nullable=True)
+    
+    # UX logic
+    verification_requested = Column(Boolean, default=False)
+    
+    @property
+    def vehicle_model(self):
+        return self.vehicle.vehicle_model if self.vehicle else None
     
     user = relationship("User", back_populates="bookings")
     land = relationship("ParkingLand", back_populates="bookings")
@@ -88,4 +102,14 @@ class Notification(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     message = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class VahanSession(Base):
+    __tablename__ = "vahan_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, unique=True, index=True, nullable=False)
+    vehicle_number = Column(String, nullable=False)
+    otp = Column(String, nullable=False)
+    is_verified = Column(Boolean, default=False)
+    expires_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
