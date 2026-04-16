@@ -1,15 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Building2, Plus, RefreshCw, Layers, CheckCircle, ShieldCheck, MapPin, Activity, Trash2 } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Layers, CheckCircle, ShieldCheck, MapPin, Activity, Trash2, Search, Crosshair } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSnackbar } from '../components/Snackbar';
-import { MapContainer, TileLayer, Marker, Polygon, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polygon, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
 let DefaultIcon = L.icon({ iconUrl: icon, shadowUrl: iconShadow, iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
+
+const ownerIcon = new L.divIcon({
+  className: 'custom-div-icon',
+  html: '<div style="background-color: #ef4444; width: 16px; height: 16px; display: block; position: relative; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>',
+  iconSize: [22, 22],
+  iconAnchor: [11, 11]
+});
+
+const MapUpdater = ({ center, zoom }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (center) {
+      map.flyTo(center, zoom || 15);
+    }
+  }, [center, zoom, map]);
+  return null;
+};
 
 // Helper component to plot 4 boundary points
 const MapPlotter = ({ onBoundariesComplete }) => {
@@ -47,6 +64,9 @@ export default function OwnerPanel() {
   const [bookings, setBookings] = useState([]);
   
   const [isAdding, setIsAdding] = useState(false);
+  const [ownerLoc, setOwnerLoc] = useState(null);
+  const [mapCenter, setMapCenter] = useState([12.9716, 77.5946]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [landForm, setLandForm] = useState({
     name: '', address: '', latitude: null, longitude: null,
     total_slots: 10, vehicle_types: ['Car', 'Bike'], price_per_hour: 40, penalty_per_hour: 100, grace_minutes: 15,
@@ -61,10 +81,52 @@ export default function OwnerPanel() {
       ]);
       setLands(lRes.data);
       setBookings(bRes.data);
-    } catch(err) { console.error('Fetch error:', err); }
+    } catch(err) { 
+      console.error('Fetch error:', err);
+      const msg = err.response?.data?.detail || "Could not fetch dashboard data. Access denied.";
+      showSnackbar(msg, "error");
+      
+      // If unauthorized/forbidden, the user might be logged into the wrong role
+      if (err.response?.status === 403 || err.response?.status === 401) {
+        console.warn("User role conflict or invalid session detected.");
+      }
+    }
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  useEffect(() => {
+    if (isAdding && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = [pos.coords.latitude, pos.coords.longitude];
+          setOwnerLoc(loc);
+          setMapCenter(loc);
+          showSnackbar("Location found! Map updated.", "success");
+        },
+        (err) => {
+          console.warn("Location permission denied", err);
+          showSnackbar("Location permission denied. You can search manually.", "warning");
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+    }
+  }, [isAdding]);
+
+  const handleSearchLocation = async () => {
+    if (!searchQuery) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        setMapCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+      } else {
+        showSnackbar("Location not found", "error");
+      }
+    } catch (err) {
+      showSnackbar("Search failed", "error");
+    }
+  };
 
   const handleBoundaries = (bnd, lat, lng) => {
     setLandForm({...landForm, boundaries: bnd, latitude: lat, longitude: lng});
@@ -173,9 +235,23 @@ export default function OwnerPanel() {
 
                 <div className="mb-4">
                   <label className="form-label">Location Plotting (Click 4 points to define boundaries)</label>
+                  <div className="d-flex gap-2 mb-2">
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="Search city or area..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSearchLocation())}
+                    />
+                    <button type="button" className="btn-action btn-secondary" onClick={handleSearchLocation}><Search size={18}/></button>
+                    <button type="button" className="btn-action" onClick={() => ownerLoc && setMapCenter(ownerLoc)} title="Jump to my location"><Crosshair size={18} /></button>
+                  </div>
                   <div style={{height: 250, borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--surface-border)', position: 'relative'}}>
-                    <MapContainer center={[12.9716, 77.5946]} zoom={13} style={{ height: '100%', width: '100%', cursor: 'crosshair' }} key={landForm.boundaries ? 'mapped' : 'unmapped'}>
+                    <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', cursor: 'crosshair' }} key={landForm.boundaries ? 'mapped' : 'unmapped'}>
                       <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+                      <MapUpdater center={mapCenter} zoom={15} />
+                      {ownerLoc && <Marker position={ownerLoc} icon={ownerIcon} />}
                       {!landForm.boundaries && <MapPlotter onBoundariesComplete={handleBoundaries} />}
                       {landForm.boundaries && (
                         <>

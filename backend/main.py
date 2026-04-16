@@ -227,6 +227,8 @@ def create_land(land_in: ParkingLandCreate, current_user: User = Depends(get_cur
 
 @app.get("/owner/lands", response_model=List[ParkingLandOut])
 def get_owner_lands(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only owners can view their parking lands")
     return db.query(ParkingLand).filter(ParkingLand.owner_id == current_user.id).all()
 
 @app.delete("/owner/lands/{land_id}")
@@ -250,6 +252,8 @@ def delete_land(land_id: int, current_user: User = Depends(get_current_user), db
 
 @app.patch("/owner/lands/{land_id}/status")
 def update_land_status(land_id: int, status: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only owners can update facility status")
     land = db.query(ParkingLand).filter(ParkingLand.id == land_id, ParkingLand.owner_id == current_user.id).first()
     if not land:
         raise HTTPException(status_code=404, detail="Land not found")
@@ -297,6 +301,8 @@ def add_vehicle(vehicle_in: VehicleCreate, current_user: User = Depends(get_curr
 
 @app.get("/customer/vehicles", response_model=List[VehicleOut])
 def get_customer_vehicles(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can view their vehicles")
     return db.query(Vehicle).filter(Vehicle.user_id == current_user.id).all()
 
 @app.delete("/customer/vehicles/{vehicle_id}")
@@ -343,8 +349,8 @@ def get_customer_history(current_user: User = Depends(get_current_user), db: Ses
 
 @app.get("/search", response_model=List[ParkingLandOut])
 def search_parking(
-    lat: float, 
-    lng: float, 
+    lat: Optional[float] = None, 
+    lng: Optional[float] = None, 
     radius: float = 5.0, 
     vehicle_type: Optional[str] = None,
     max_price: Optional[float] = None,
@@ -355,28 +361,26 @@ def search_parking(
     expire_reservations(db)
     
     lands = db.query(ParkingLand).filter(ParkingLand.status == "ONLINE").all()
+    # Fetch all ratings in one go to eliminate O(N) N+1 query performance bottleneck
+    land_ids = [land.id for land in lands]
+    ratings = db.query(
+        Booking.land_id,
+        func.avg(Booking.rating).label('avg'),
+        func.count(Booking.rating).label('count')
+    ).filter(
+        Booking.land_id.in_(land_ids), 
+        Booking.rating.isnot(None)
+    ).group_by(Booking.land_id).all()
+    
+    rating_map = {r.land_id: {"avg": float(r.avg), "count": int(r.count)} for r in ratings}
+
     results = []
     for land in lands:
-        if land.available_slots < required_slots:
-            continue
-        if max_price is not None and land.price_per_hour > max_price:
-            continue
-            
-        distance = geodesic((lat, lng), (land.latitude, land.longitude)).km
-        if distance <= radius:
-            if vehicle_type and vehicle_type not in land.vehicle_types:
-                continue
-            
-            # Calculate rating metrics
-            rating_data = db.query(
-                func.avg(Booking.rating).label('avg'),
-                func.count(Booking.rating).label('count')
-            ).filter(Booking.land_id == land.id, Booking.rating.isnot(None)).first()
-            
-            land_dict = {c.name: getattr(land, c.name) for c in land.__table__.columns}
-            land_dict["avg_rating"] = float(rating_data.avg) if rating_data.avg else 0.0
-            land_dict["review_count"] = int(rating_data.count)
-            results.append(land_dict)
+        land_dict = {c.name: getattr(land, c.name) for c in land.__table__.columns}
+        r_data = rating_map.get(land.id, {"avg": 0.0, "count": 0})
+        land_dict["avg_rating"] = r_data["avg"]
+        land_dict["review_count"] = r_data["count"]
+        results.append(land_dict)
     return results
 
 def expire_reservations(db: Session):

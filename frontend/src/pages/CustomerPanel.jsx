@@ -55,6 +55,8 @@ export default function CustomerPanel() {
 
   const [vehicles, setVehicles] = useState([]);
   const [searchRes, setSearchRes] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [hasLocation, setHasLocation] = useState(false);
 
   // Geolocation & Swiggy-like exact filters
   const [userLoc, setUserLoc] = useState([12.9716, 77.5946]);
@@ -173,7 +175,7 @@ export default function CustomerPanel() {
         if (err.code === 1) {
           alert("Location Permission Denied. Please enable location access in your browser settings to use live navigation.");
         }
-        handleSearch(userLoc[0], userLoc[1]);
+        handleSearch(null, null);
       },
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
     );
@@ -281,7 +283,10 @@ export default function CustomerPanel() {
     try {
       const { data } = await authAxios.get('/customer/vehicles');
       setVehicles(data);
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      showSnackbar("Failed to sync fleet data. Access restricted.", "error");
+    }
   };
 
   const fetchActiveBookings = async () => {
@@ -333,7 +338,10 @@ export default function CustomerPanel() {
       });
 
       setActiveBookings(Object.values(groups));
-    } catch (err) { console.error('Error fetching active bookings:', err); }
+    } catch (err) {
+      console.error('Error fetching active bookings:', err);
+      showSnackbar("Could not sync active sessions.", "error");
+    }
   };
 
   const handleAddVehicle = async (e) => {
@@ -379,8 +387,13 @@ export default function CustomerPanel() {
   };
 
   const handleSearch = async (lat = userLoc[0], lng = userLoc[1]) => {
+    setSearching(true);
     try {
-      const params = { lat, lng, radius: filterForm.radius || 10, required_slots: selectedVehicleIds.length || 1 };
+      const params = { radius: filterForm.radius || 10, required_slots: selectedVehicleIds.length || 1 };
+      if (lat !== null && lng !== null) {
+        params.lat = lat;
+        params.lng = lng;
+      }
       if (filterForm.vehicle_type) params.vehicle_type = filterForm.vehicle_type;
       if (filterForm.max_price) params.max_price = filterForm.max_price;
 
@@ -399,7 +412,9 @@ export default function CustomerPanel() {
           key = `${lat.toFixed(6)},${lng.toFixed(6)}`;
         }
         seen.add(key);
-        return { ...land, displayLat: lat, displayLng: lng };
+        // Pre-compute expensive Distance calculation exactly once!
+        const computedDistance = calculateDistance(userLoc[0], userLoc[1], lat, lng);
+        return { ...land, displayLat: lat, displayLng: lng, computedDistance };
       });
 
       setSearchRes(jitteredData);
@@ -532,7 +547,8 @@ export default function CustomerPanel() {
                 <Popup>
                   <div style={{ width: 220 }}>
                     <strong style={{ fontSize: '1.2rem', color: '#1e1b4b' }}>{land.name}</strong><br />
-                    <span style={{ color: '#64748b' }}>{land.address}</span>
+                    <span style={{ color: '#64748b' }}>{land.address}</span><br />
+                    <span style={{ color: 'var(--status-green)', fontWeight: 700, fontSize: '0.9rem' }}>{land.available_slots} slots available now</span>
                     <hr style={{ margin: '0.5rem 0', borderColor: '#e2e8f0' }} />
                     <button className="btn-action w-full" style={{ padding: '0.6rem' }} onClick={(e) => { e.stopPropagation(); openDetails(land); }}>
                       View Details & Reviews
@@ -642,19 +658,45 @@ export default function CustomerPanel() {
         <div className="grid-cards">
           {[...searchRes]
             .sort((a, b) => {
-              if (sortBy === 'rating') {
-                return (b.avg_rating || 0) - (a.avg_rating || 0);
-              } else if (sortBy === 'price') {
-                return a.price_per_hour - b.price_per_hour;
-              } else {
-                // Default: distance (nearest first)
-                const dA = calculateDistance(userLoc[0], userLoc[1], a.latitude, a.longitude);
-                const dB = calculateDistance(userLoc[0], userLoc[1], b.latitude, b.longitude);
-                return dA - dB;
+              let scoreA = 0, scoreB = 0;
+
+              // Ultra-fast O(1) property lookup (memoized during network fetch)
+              const dA = a.computedDistance || 0;
+              const dB = b.computedDistance || 0;
+
+              if (dA <= (filterForm.radius || 10)) scoreA += 100;
+              if (dB <= (filterForm.radius || 10)) scoreB += 100;
+
+              if (filterForm.vehicle_type) {
+                if (a.vehicle_types.includes(filterForm.vehicle_type)) scoreA += 50;
+                if (b.vehicle_types.includes(filterForm.vehicle_type)) scoreB += 50;
               }
+
+              if (filterForm.max_price) {
+                if (a.price_per_hour <= filterForm.max_price) scoreA += 30;
+                if (b.price_per_hour <= filterForm.max_price) scoreB += 30;
+              }
+
+              const reqSlots = selectedVehicleIds.length || 1;
+              if (a.available_slots >= reqSlots) scoreA += 80;
+              if (b.available_slots >= reqSlots) scoreB += 80;
+
+              // 1. User Explicit SortBy overrides everything so they see what they clicked immediately
+              if (sortBy === 'price' && a.price_per_hour !== b.price_per_hour) {
+                return a.price_per_hour - b.price_per_hour;
+              }
+              if (sortBy === 'rating' && (b.avg_rating || 0) !== (a.avg_rating || 0)) {
+                return (b.avg_rating || 0) - (a.avg_rating || 0);
+              }
+
+              // 2. Highest filter match score bubbles to the top next
+              if (scoreA !== scoreB) return scoreB - scoreA;
+
+              // 3. Ultimate Fallback: distance
+              return dA - dB;
             })
             .map(land => {
-              const distance = calculateDistance(userLoc[0], userLoc[1], land.latitude, land.longitude).toFixed(1);
+              const distance = land.computedDistance?.toFixed(1) || "0.0";
               return (
                 <div key={land.id} className="glass-card mb-4" onClick={() => openDetails(land)} style={{ cursor: 'pointer', transition: '0.2s', borderLeft: '4px solid #fbbf24' }}>
                   <div className="card-header">
@@ -868,6 +910,9 @@ export default function CustomerPanel() {
                   ★ {selectedLand.avg_rating?.toFixed(1) || "0.0"}
                 </div>
                 <span className="text-secondary">{selectedLand.review_count || 0} community ratings</span>
+                <div style={{ marginLeft: 'auto', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--status-green)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)', fontWeight: 700 }}>
+                  {selectedLand.available_slots} Slots Free
+                </div>
               </div>
             </div>
 
