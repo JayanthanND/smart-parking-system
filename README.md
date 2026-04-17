@@ -16,53 +16,40 @@ A premium, full-stack parking management solution featuring high-fidelity indoor
 - **Optional Grouping Toggle:** Flexibility to choose between unified fleet control or independent vehicle sessions.
 - **Proactive Expiry:** Automated reservation cleanup to ensure maximum slot availability.
 
-### 🏢 Owner Operations Suite
-- **Operations Queue:** Dedicated, full-screen management interface for tracking arrivals, verify entries, and processing streamlined payments.
-- **Network Management:** Toggle parking facilities ONLINE/OFFLINE in real-time.
-- **Revenue Analytics:** Instant calculations of base fees and overstay penalties.
+### 📊 Operational transparency
+- **Profile Persistence:** Users and Owners can see their registered phone numbers in the global header.
+- **Direct Facility Contact:** Customers can call facility owners directly from search results or booking history.
+- **Operations Hub:** A dedicated real-time view for owners to manage live arrivals and departures.
 
 ## 🛠️ Tech Stack
-- **Frontend:** React 19, Vite, React-Leaflet, Leaflet Routing Machine, Lucide Icons.
-- **Backend:** Python 3.9+, FastAPI, SQLAlchemy (SQLite).
-- **Security:** JWT Authentication with bcrypt password hashing.
+- **Frontend:** React 19, Vite, React-Leaflet, Lucide Icons.
+- **Backend:** Python 3.11+, FastAPI, SQLAlchemy, SQLite/PostgreSQL.
+- **Security:** JWT Authentication with bcrypt hashing.
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.9+ installed.
+- Python 3.11+ installed.
 - Node.js & npm installed.
 
 ### 1. Backend Setup
-```zsh
-# Navigate to project root
-cd smart-parking-system
-
-# Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
+```bash
 # Install dependencies
 pip install -r requirements.txt
 
 # Initialize database
-python3 -m backend.init_db
+python3 init_db.py
 
-# Start the server
-python3 app.py
+# Start the server (Development)
+uvicorn backend.main:app --reload
 ```
-*The backend stays active on `http://localhost:8000`*
 
 ### 2. Frontend Setup
-```zsh
-# Navigate to frontend folder
+```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start the development server
 npm run dev
 ```
 *Access the dashboard at `http://localhost:5173`*

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
-import { Activity, MapPin, Search, CheckCircle, Navigation, Key, Crosshair, Map as MapIcon, SlidersHorizontal, ArrowUp, ArrowUpRight, ArrowUpLeft, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, RotateCcw, Flag, Maximize, Minimize, Star, X, ShieldCheck, Trash2, Clock } from 'lucide-react';
+import { Activity, MapPin, Search, CheckCircle, Navigation, Key, Crosshair, Map as MapIcon, SlidersHorizontal, ArrowUp, ArrowUpRight, ArrowUpLeft, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, RotateCcw, Flag, Maximize, Minimize, Star, X, ShieldCheck, Trash2, Clock, Phone } from 'lucide-react';
 import { useSnackbar } from '../components/Snackbar';
 import ReviewModal from '../components/ReviewModal';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
@@ -60,9 +60,16 @@ export default function CustomerPanel() {
 
   // Geolocation & Swiggy-like exact filters
   const [userLoc, setUserLoc] = useState([12.9716, 77.5946]);
-  const [filterForm, setFilterForm] = useState({ radius: 5, vehicle_type: '', max_price: '', intended_duration: 1.0 });
+  const [filterForm, setFilterForm] = useState({ radius: 1000, vehicle_type: '', max_price: '', intended_duration: 1.0 });
   const [selectedVehicleIds, setSelectedVehicleIds] = useState([]); // Multiple selection
   const [newVehicle, setNewVehicle] = useState({ vehicle_number: '', vehicle_type: 'Car' });
+
+  const resetFilters = () => {
+    setFilterForm({ radius: 1000, vehicle_type: '', max_price: '', intended_duration: 1.0 });
+    setSortBy('distance');
+    showSnackbar("Filters cleared. Showing all available spaces.", "info");
+    handleSearch(userLoc[0], userLoc[1]);
+  };
 
   const [activeBookings, setActiveBookings] = useState([]);
   const [navigatingTo, setNavigatingTo] = useState(null); // { lat, lng, name }
@@ -349,15 +356,15 @@ export default function CustomerPanel() {
     if (!newVehicle.vehicle_number) return;
 
     setIsVerifyingVahan(true);
-    showSnackbar("Analyzing Registration (Vahan Portal)...", "info");
+    showSnackbar("Verifying registration details...", "info");
     try {
       const { data } = await authAxios.post('/vahan/verify-and-add', { vehicle_number: newVehicle.vehicle_number });
-      showSnackbar(`Success! ${data.vehicle.number} added to your fleet.`, "success");
+      showSnackbar(`${data.vehicle.number} verified and added to your fleet.`, "success");
 
       setNewVehicle({ vehicle_number: '', vehicle_type: 'Car' });
       fetchVehicles();
     } catch (err) {
-      showSnackbar(err.response?.data?.detail || "Vahan search failed", "error");
+      showSnackbar(err.response?.data?.detail || "Verification failed. Please try again.", "error");
     } finally {
       setIsVerifyingVahan(false);
     }
@@ -418,7 +425,19 @@ export default function CustomerPanel() {
       });
 
       setSearchRes(jitteredData);
-    } catch (err) { console.error("Search Error", err); }
+
+      // Feedback to user that filter worked
+      if (jitteredData.length > 0) {
+        showSnackbar(`Found ${jitteredData.length} spaces matching your filters.`, "success");
+      } else {
+        showSnackbar("No spaces found matching these filters.", "warning");
+      }
+    } catch (err) {
+      console.error("Search Error", err);
+      showSnackbar("Failed to update results. Check your connection.", "error");
+    } finally {
+      setSearching(false);
+    }
   };
 
   const reserveMultiple = async (landId) => {
@@ -472,7 +491,11 @@ export default function CustomerPanel() {
       await Promise.all(validBookings.map(b => authAxios.post(`/bookings/${b.id}/pay?method=${method}`)));
       fetchActiveBookings();
       fetchRecentStays();
-      showSnackbar(`Payment for ${group.isGroup ? 'Group' : 'Stay'} Success!`, "success");
+      const methodLabel = method === 'ONLINE' ? 'Online' : 'Cash';
+      showSnackbar(
+        `Payment Successful! ${methodLabel} payment of \u20b9${group.total_amount?.toFixed(2)} processed.`,
+        "success"
+      );
 
       // Auto-trigger review for the first booking in the group
       if (group.bookings && group.bookings[0]) {
@@ -512,12 +535,16 @@ export default function CustomerPanel() {
           <input type="number" placeholder="Duration(hr)" min="0.5" step="0.5" className="form-input" style={{ width: 110, padding: '0.4rem' }} value={filterForm.intended_duration} onChange={e => setFilterForm({ ...filterForm, intended_duration: e.target.value })} title="Intended Hours" />
 
           <select className="form-select" style={{ width: 130, padding: '0.4rem' }} value={sortBy} onChange={e => setSortBy(e.target.value)} title="Sort Results">
-            <option value="distance">📍 Nearest</option>
-            <option value="rating">⭐ Top Rated</option>
-            <option value="price">💰 Cheapest</option>
+            <option value="distance">Nearest</option>
+            <option value="rating">Top Rated</option>
+            <option value="price">Cheapest</option>
           </select>
 
           <button className="btn-action" style={{ padding: '0.4rem 1rem' }} onClick={() => handleSearch()}><SlidersHorizontal size={18} /> Apply</button>
+
+          <button className="btn-action btn-secondary" style={{ padding: '0.4rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={resetFilters}>
+            <RotateCcw size={16} /> Reset
+          </button>
         </div>
 
         {/* Live Interaction Map */}
@@ -638,62 +665,52 @@ export default function CustomerPanel() {
                     </div>
                   )}
                 </div>
-                <button className="btn-icon" onClick={stopNavigation} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '50%', width: 32, height: 32 }}>
-                  <Search size={16} style={{ transform: 'rotate(45deg)' }} />
-                </button>
+                <div className="d-flex flex-column gap-2" style={{ flexShrink: 0 }}>
+                  <button className="btn-icon" onClick={stopNavigation} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '50%', width: 32, height: 32 }}>
+                    <X size={16} />
+                  </button>
+                  {activeBookings[0]?.bookings[0]?.owner_phone && (
+                    <a href={`tel:${activeBookings[0].bookings[0].owner_phone}`} className="btn-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Call Owner">
+                      <Phone size={14} color="var(--status-green)" />
+                    </a>
+                  )}
+                </div>
               </div>
             </div>
           )}
         </div>
-
         {/* Available Nearby Slots Grid */}
         {searchRes.length > 0 && (
           <div className="d-flex align-center justify-between mb-4">
             <h3>Nearby Parkings ({searchRes.length} found)</h3>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              Sorted by: <strong style={{ color: 'var(--accent-primary)' }}>{sortBy === 'rating' ? '⭐ Rating' : sortBy === 'price' ? '💰 Price' : '📍 Distance'}</strong>
+              Sorted by: <strong style={{ color: 'var(--accent-primary)' }}>{sortBy === 'rating' ? 'Rating' : sortBy === 'price' ? 'Price' : 'Distance'}</strong>
             </span>
           </div>
         )}
         <div className="grid-cards">
           {[...searchRes]
             .sort((a, b) => {
-              let scoreA = 0, scoreB = 0;
-
-              // Ultra-fast O(1) property lookup (memoized during network fetch)
-              const dA = a.computedDistance || 0;
-              const dB = b.computedDistance || 0;
-
-              if (dA <= (filterForm.radius || 10)) scoreA += 100;
-              if (dB <= (filterForm.radius || 10)) scoreB += 100;
-
-              if (filterForm.vehicle_type) {
-                if (a.vehicle_types.includes(filterForm.vehicle_type)) scoreA += 50;
-                if (b.vehicle_types.includes(filterForm.vehicle_type)) scoreB += 50;
-              }
-
-              if (filterForm.max_price) {
-                if (a.price_per_hour <= filterForm.max_price) scoreA += 30;
-                if (b.price_per_hour <= filterForm.max_price) scoreB += 30;
-              }
-
-              const reqSlots = selectedVehicleIds.length || 1;
-              if (a.available_slots >= reqSlots) scoreA += 80;
-              if (b.available_slots >= reqSlots) scoreB += 80;
-
-              // 1. User Explicit SortBy overrides everything so they see what they clicked immediately
+              // 1. Primary User Sort Preference
               if (sortBy === 'price' && a.price_per_hour !== b.price_per_hour) {
                 return a.price_per_hour - b.price_per_hour;
               }
               if (sortBy === 'rating' && (b.avg_rating || 0) !== (a.avg_rating || 0)) {
                 return (b.avg_rating || 0) - (a.avg_rating || 0);
               }
+              if (sortBy === 'distance') {
+                const dA = a.computedDistance || 0;
+                const dB = b.computedDistance || 0;
+                if (dA !== dB) return dA - dB;
+              }
 
-              // 2. Highest filter match score bubbles to the top next
-              if (scoreA !== scoreB) return scoreB - scoreA;
+              // 2. Secondary Logic: Availability
+              const reqSlots = selectedVehicleIds.length || 1;
+              const hasA = a.available_slots >= reqSlots;
+              const hasB = b.available_slots >= reqSlots;
+              if (hasA !== hasB) return hasB ? 1 : -1;
 
-              // 3. Ultimate Fallback: distance
-              return dA - dB;
+              return 0;
             })
             .map(land => {
               const distance = land.computedDistance?.toFixed(1) || "0.0";
@@ -713,6 +730,11 @@ export default function CustomerPanel() {
                       <span className="text-secondary">({land.review_count || 0} reviews)</span>
                     </div>
                     <div><strong>Base:</strong> ₹{land.price_per_hour}/hr</div>
+                    {land.owner_phone_no && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', marginTop: '0.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Phone size={14} /> {land.owner_phone_no}
+                      </div>
+                    )}
                     <div style={{ color: 'var(--status-green)', marginTop: '0.5rem', fontWeight: 700 }}>{land.available_slots} slots left</div>
                   </div>
                   <div className="card-footer" style={{ marginTop: '0.5rem', paddingTop: '0.5rem' }}>
@@ -750,7 +772,7 @@ export default function CustomerPanel() {
                       disabled={isVerifying[group.id]}
                       onClick={() => groupCheckIn(group)}
                     >
-                      {isVerifying[group.id] ? <><Activity size={18} className="animate-pulse" /> Requesting...</> : <><Navigation size={18} /> Verify Group Entry</>}
+                      {isVerifying[group.id] ? <><Activity size={18} className="animate-pulse" /> Requesting...</> : <><Navigation size={18} /> {group.isGroup ? 'Verify Group Entry' : 'Verify Check-in'}</>}
                     </button>
                     <button className="btn-action btn-secondary" title="Navigate Lively" onClick={() => {
                       const b = group.bookings && group.bookings[0];
@@ -762,6 +784,11 @@ export default function CustomerPanel() {
                     }}>
                       <Navigation size={18} />
                     </button>
+                    {group.bookings[0]?.owner_phone_no && (
+                      <a href={`tel:${group.bookings[0].owner_phone_no}`} className="btn-action btn-secondary" title="Call Owner" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Phone size={18} />
+                      </a>
+                    )}
                   </div>
                 )}
 
@@ -822,11 +849,23 @@ export default function CustomerPanel() {
                       <div style={{ width: 16, height: 16, borderRadius: 4, border: '1px solid var(--text-secondary)', background: isSelected ? 'var(--status-green)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {isSelected && <CheckCircle size={12} color="white" />}
                       </div>
-                      <span style={{ fontWeight: 700, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>#{idx + 1}</span>
-                      <span style={{ fontWeight: 700 }}>{v.vehicle_number}</span>
+                      <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-sm)', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         {v.vehicle_type === 'Bike' ? <RotateCcw size={16} color="var(--accent-primary)" /> : <Activity size={16} color="var(--accent-primary)" />}
+                      </div>
+                      <div>
+                        <div className="d-flex align-center gap-2">
+                          <span style={{ fontWeight: 700, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>#{idx + 1}</span>
+                          <span style={{ fontWeight: 700 }}>{v.vehicle_number}</span>
+                        </div>
+                        {v.vehicle_model && (
+                            <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: '-2px' }}>
+                            {v.vehicle_model}
+                            </div>
+                        )}
+                      </div>
                     </div>
                     <div className="d-flex align-center gap-2">
-                      <span className="card-badge badge-offline">{v.vehicle_type}</span>
+                      <span className="card-badge badge-offline" style={{ fontSize: '0.65rem' }}>{v.vehicle_type}</span>
                       <button
                         onClick={(e) => handleDeleteVehicle(e, v.id, v.vehicle_number)}
                         style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', borderRadius: '4px', transition: '0.2s', display: 'flex', alignItems: 'center' }}
@@ -838,11 +877,6 @@ export default function CustomerPanel() {
                       </button>
                     </div>
                   </div>
-                  {v.vehicle_model && (
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', paddingLeft: '2.2rem', marginTop: '2px', fontStyle: 'italic' }}>
-                      {v.vehicle_model}
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -864,12 +898,12 @@ export default function CustomerPanel() {
             <button className="btn-action w-full text-center d-flex align-center justify-center gap-2" disabled={isVerifyingVahan || !newVehicle.vehicle_number}>
               {isVerifyingVahan ? (
                 <>
-                  <Activity className="animate-pulse" size={16} /> Connecting to Vahan Portal...
+                  <Activity className="animate-pulse" size={16} /> Verifying...
                 </>
               ) : "Verify & Add to Fleet"}
             </button>
             <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.5rem', textAlign: 'center' }}>
-              Secure verification via Parivahan Government Portal
+              Secure verification via Government Vehicle Registry
             </p>
           </form>
         </div>
@@ -906,8 +940,8 @@ export default function CustomerPanel() {
               <h2 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>{selectedLand.name}</h2>
               <p className="text-secondary d-flex align-center gap-2"><MapPin size={16} /> {selectedLand.address}</p>
               <div className="d-flex align-center gap-3 mt-4">
-                <div style={{ background: 'rgba(251, 191, 36, 0.1)', color: '#fbbf24', padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)', fontWeight: 700, fontSize: '1.2rem' }}>
-                  ★ {selectedLand.avg_rating?.toFixed(1) || "0.0"}
+                <div style={{ background: 'rgba(251, 191, 36, 0.1)', color: '#fbbf24', padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)', fontWeight: 700, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Star size={18} fill="#fbbf24" color="#fbbf24" /> {selectedLand.avg_rating?.toFixed(1) || "0.0"}
                 </div>
                 <span className="text-secondary">{selectedLand.review_count || 0} community ratings</span>
                 <div style={{ marginLeft: 'auto', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--status-green)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)', fontWeight: 700 }}>
@@ -917,8 +951,8 @@ export default function CustomerPanel() {
             </div>
 
             {/* Action Bar */}
-            <div style={{ padding: '1.5rem 2rem', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: '1rem' }}>
-              <button className="btn-action w-full" onClick={() => reserveMultiple(selectedLand.id)}>
+            <div style={{ padding: '1.5rem 2rem', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <button className="btn-action" style={{ flexGrow: 2 }} onClick={() => reserveMultiple(selectedLand.id)}>
                 Secure Space Now (₹{selectedLand.price_per_hour}/hr)
               </button>
               <button className="btn-action btn-secondary" title="Navigate" onClick={() => {
@@ -927,6 +961,11 @@ export default function CustomerPanel() {
               }}>
                 <Navigation size={20} />
               </button>
+              {selectedLand.owner_phone_no && (
+                <a href={`tel:${selectedLand.owner_phone_no}`} className="btn-action btn-secondary" title="Call Owner" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexGrow: 0.5 }}>
+                  <Phone size={20} />
+                </a>
+              )}
             </div>
 
             {/* Reviews Section */}

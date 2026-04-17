@@ -6,7 +6,7 @@ import OwnerPanel from './pages/OwnerPanel';
 import OperationsQueue from './pages/OperationsQueue';
 import CustomerPanel from './pages/CustomerPanel';
 import './App.css';
-import { LogOut, Zap, History as HistoryIcon, Bell, X } from 'lucide-react';
+import { LogOut, Zap, History as HistoryIcon, Bell, X, Phone } from 'lucide-react';
 import { SnackbarProvider, useSnackbar } from './components/Snackbar';
 import History from './pages/History';
 
@@ -131,7 +131,14 @@ const Layout = () => {
                 )}
               </div>
             </div>
-            <span>Welcome, <strong>{user.username}</strong> ({user.role})</span>
+            <div className="d-flex flex-column text-right" style={{ lineHeight: 1.2 }}>
+              <span>Welcome, <strong>{user.username}</strong> ({user.role})</span>
+              {user.phone_no && (
+                <span style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', marginTop: '2px' }}>
+                  <Phone size={10} /> {user.phone_no}
+                </span>
+              )}
+            </div>
             <button className="btn-icon" onClick={handleLogout} title="Logout">
               <LogOut size={20} color="#ef4444" />
             </button>

@@ -23,6 +23,7 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.CUSTOMER)
     active_nav_land_id = Column(Integer, ForeignKey("parking_lands.id"), nullable=True)
     is_nav_fullscreen = Column(Boolean, default=False)
+    phone_no = Column(String, nullable=True)
     
     hands = relationship("ParkingLand", back_populates="owner", foreign_keys="ParkingLand.owner_id")
     active_navigation = relationship("ParkingLand", foreign_keys=[active_nav_land_id])
@@ -45,6 +46,7 @@ class ParkingLand(Base):
     penalty_per_hour = Column(Float, nullable=False)
     grace_minutes = Column(Integer, default=15)
     boundaries = Column(JSON, nullable=True) # GeoJSON style or array of 4 objects
+    image_url = Column(String, nullable=True)
     
     
     owner = relationship("User", back_populates="hands", foreign_keys=[owner_id])
@@ -57,6 +59,7 @@ class Vehicle(Base):
     vehicle_number = Column(String, unique=True, nullable=False)
     vehicle_type = Column(String, nullable=False)
     vehicle_model = Column(String, nullable=True) # e.g. "Honda City"
+    image_url = Column(String, nullable=True)
     
     owner = relationship("User", back_populates="vehicles")
     bookings = relationship("Booking", back_populates="vehicle")
@@ -91,6 +94,10 @@ class Booking(Base):
     @property
     def vehicle_model(self):
         return self.vehicle.vehicle_model if self.vehicle else None
+
+    @property
+    def safe_vehicle_id(self):
+        return self.vehicle_id
     
     user = relationship("User", back_populates="bookings")
     land = relationship("ParkingLand", back_populates="bookings")

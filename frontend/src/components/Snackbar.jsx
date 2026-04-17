@@ -1,4 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
+import { CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react';
 
 const SnackbarContext = createContext();
 
@@ -35,10 +36,10 @@ const SnackbarItem = ({ alert, onRemove }) => {
   }, [onRemove]);
 
   const icons = {
-    success: '✅',
-    error: '❌',
-    warning: '⚠️',
-    info: 'ℹ️'
+    success: <CheckCircle size={16} />,
+    error: <XCircle size={16} />,
+    warning: <AlertTriangle size={16} />,
+    info: <Info size={16} />
   };
 
   return (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Building2, Plus, RefreshCw, Layers, CheckCircle, ShieldCheck, MapPin, Activity, Trash2, Search, Crosshair } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Layers, CheckCircle, ShieldCheck, MapPin, Activity, Trash2, Search, Crosshair, Phone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSnackbar } from '../components/Snackbar';
 import { MapContainer, TileLayer, Marker, Polygon, useMapEvents, useMap } from 'react-leaflet';
@@ -323,7 +323,8 @@ export default function OwnerPanel() {
             <thead>
               <tr style={{borderBottom: '1px solid var(--surface-border)'}}>
                 <th style={{padding: '0.75rem'}}>ID</th>
-                <th style={{padding: '0.75rem'}}>Land ID</th>
+                <th style={{padding: '0.75rem'}}>Facility</th>
+                <th style={{padding: '0.75rem'}}>Customer Details</th>
                 <th style={{padding: '0.75rem'}}>Vehicle</th>
                 <th style={{padding: '0.75rem'}}>Status</th>
                 <th style={{padding: '0.75rem'}}>Total Amt</th>
@@ -344,8 +345,19 @@ export default function OwnerPanel() {
                 return (
                   <tr key={b.id} style={{borderBottom: '1px solid var(--surface-border)'}}>
                     <td style={{padding: '0.75rem'}}>#{b.id}</td>
-                    <td style={{padding: '0.75rem'}}>{b.land_id}</td>
-                    <td style={{padding: '0.75rem'}}>{b.vehicle_id}</td>
+                    <td style={{padding: '0.75rem'}}>
+                      <div style={{fontWeight: 600}}>{b.land_name || `Land #${b.land_id}`}</div>
+                    </td>
+                    <td style={{padding: '0.75rem'}}>
+                      <div style={{fontWeight: 600}}>{b.customer_name || "Guest"}</div>
+                      <div style={{fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px'}}>
+                        <Phone size={12}/> {b.customer_phone_no || "N/A"}
+                      </div>
+                    </td>
+                    <td style={{padding: '0.75rem'}}>
+                      <div style={{fontWeight: 600}}>{b.vehicle_number || "N/A"}</div>
+                      <div style={{fontSize: '0.8rem', color: 'var(--text-secondary)'}}>{b.vehicle_model}</div>
+                    </td>
                     <td style={{
                       padding: '0.75rem', 
                       color: statusLabel === 'ACTIVE' ? 'var(--status-green)' : 
@@ -353,13 +365,13 @@ export default function OwnerPanel() {
                              statusLabel === 'COMPLETED' ? 'var(--text-secondary)' : 'inherit', 
                       fontWeight: (statusLabel === 'ACTIVE' || statusLabel === 'CANCELLED') ? 700 : 'normal'
                     }}>
-                      {statusLabel}
+                      <span className={`card-badge ${statusLabel === 'ACTIVE' ? 'badge-active' : ''}`}>{statusLabel}</span>
                     </td>
-                    <td style={{padding: '0.75rem'}}>₹{b.total_amount?.toFixed(2)||'0.00'}</td>
+                    <td style={{padding: '0.75rem', fontWeight: 700}}>₹{b.total_amount?.toFixed(2)||'0.00'}</td>
                   </tr>
                 );
               })}
-              {bookings.length === 0 && <tr><td colSpan="5" style={{padding: '1rem', textAlign: 'center'}}>No bookings found.</td></tr>}
+              {bookings.length === 0 && <tr><td colSpan="6" style={{padding: '1rem', textAlign: 'center'}}>No bookings found in history.</td></tr>}
             </tbody>
           </table>
         </div>

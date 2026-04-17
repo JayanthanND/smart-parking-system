@@ -2,21 +2,46 @@
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-ENV/
+*.so
+.Python
 env/
-.env
-*.db
-*.log
+venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
 
-# Node
+# Node / Frontend
 node_modules/
 dist/
 dist-ssr/
 *.local
-frontend/node_modules/
-frontend/dist/
+.eslintcache
+.stylelintcache
+*.log
+
+# Environment / Secret
+.env
+.flaskenv
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Project Specific
+backend.log
+vite.log
+nohup.out

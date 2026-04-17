@@ -7,7 +7,7 @@ export default function Auth() {
   const { login, register, user, loading } = useAuth();
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'CUSTOMER' });
+  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'CUSTOMER', phone_no: '' });
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -26,7 +26,7 @@ export default function Auth() {
       if (isLogin) {
         await login(form.username, form.password);
       } else {
-        await register(form.username, form.email, form.password, form.role);
+        await register(form.username, form.email, form.password, form.role, form.phone_no);
         setIsLogin(true);
         setError('Registration successful! Please sign in.');
       }
@@ -61,6 +61,13 @@ export default function Auth() {
             <label className="form-label">Password</label>
             <input name="password" type="password" value={form.password} onChange={handleChange} className="form-input" required />
           </div>
+
+          {!isLogin && (
+            <div className="form-group">
+              <label className="form-label">Phone Number</label>
+              <input name="phone_no" value={form.phone_no} onChange={handleChange} className="form-input" placeholder="e.g. +91 9876543210" required />
+            </div>
+          )}
 
           {!isLogin && (
             <div className="form-group">

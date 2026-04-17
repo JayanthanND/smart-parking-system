@@ -35,6 +35,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: UserRole
+    phone_no: str
 
 class UserOut(BaseModel):
     id: int
@@ -43,6 +44,7 @@ class UserOut(BaseModel):
     role: UserRole
     active_nav_land_id: Optional[int] = None
     is_nav_fullscreen: bool = False
+    phone_no: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -82,6 +84,8 @@ class ParkingLandOut(BaseModel):
     grace_minutes: int
     avg_rating: Optional[float] = 0.0
     review_count: Optional[int] = 0
+    image_url: Optional[str] = None
+    owner_phone_no: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -94,13 +98,14 @@ class VehicleOut(BaseModel):
     vehicle_number: str
     vehicle_type: str
     vehicle_model: Optional[str] = None
+    image_url: Optional[str] = None
     class Config:
         from_attributes = True
 
 class BookingOut(BaseModel):
     id: int
     land_id: int
-    vehicle_id: int
+    vehicle_id: Optional[int] = None
     status: BookingStatus
     reserved_at: datetime
     checked_in_at: Optional[datetime]
@@ -115,10 +120,14 @@ class BookingOut(BaseModel):
     verification_requested: bool = False
     estimated_arrival_at: Optional[datetime] = None
     vehicle_model: Optional[str] = None
-    # Navigation fields
+    vehicle_number: Optional[str] = None
+    # Communication & Navigation fields
     land_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    owner_phone_no: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone_no: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -169,7 +178,8 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         username=user_in.username,
         email=user_in.email,
         password_hash=hashed_password,
-        role=user_in.role
+        role=user_in.role,
+        phone_no=user_in.phone_no
     )
     db.add(db_user)
     db.commit()
@@ -189,14 +199,6 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
-@app.get("/health")
-def health_check():
-    return {
-        "status": "healthy",
-        "version": "1.2.0",
-        "timestamp": datetime.utcnow().isoformat(),
-        "database": "connected"
-    }
 
 @app.post("/customer/navigation-state")
 def update_nav_state(state: NavStateUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -283,9 +285,33 @@ def update_booking_eta(booking_id: int, eta_in: ETAUpdateIn, current_user: User 
 def list_owner_bookings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=403, detail="Only owners can view bookings")
-    # Join with ParkingLand to filter by owner_id
-    bookings = db.query(Booking).join(ParkingLand).filter(ParkingLand.owner_id == current_user.id).all()
-    return bookings
+
+    # Join with ParkingLand to get land details, filter by owner
+    results = db.query(Booking, ParkingLand.name, ParkingLand.latitude, ParkingLand.longitude).join(
+        ParkingLand, Booking.land_id == ParkingLand.id
+    ).filter(ParkingLand.owner_id == current_user.id).order_by(Booking.id.desc()).all()
+
+    output = []
+    for booking, name, lat, lng in results:
+        b_dict = {c.name: getattr(booking, c.name) for c in booking.__table__.columns}
+        b_dict["land_name"] = name
+        b_dict["latitude"] = lat
+        b_dict["longitude"] = lng
+        if booking.user:
+            b_dict["customer_name"] = booking.user.username
+            b_dict["customer_phone_no"] = booking.user.phone_no
+            
+        # Safe vehicle details: vehicle may be NULL if the vehicle was deleted
+        if booking.vehicle:
+            b_dict["vehicle_model"] = booking.vehicle.vehicle_model
+            b_dict["vehicle_number"] = booking.vehicle.vehicle_number
+        else:
+            b_dict["vehicle_model"] = None
+            b_dict["vehicle_number"] = None
+        output.append(b_dict)
+    return output
+
+
 
 # Customer Endpoints
 @app.post("/customer/vehicles", response_model=VehicleOut)
@@ -311,14 +337,20 @@ def delete_vehicle(vehicle_id: int, current_user: User = Depends(get_current_use
     if not vehicle or vehicle.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Vehicle not found or unauthorized")
     
-    # Check for active bookings
+    # Check for active/reserved bookings — ACTIVE is the correct enum value (not CHECKED_IN)
     active_booking = db.query(Booking).filter(
         Booking.vehicle_id == vehicle_id,
-        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.CHECKED_IN])
+        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.ACTIVE])
     ).first()
     
     if active_booking:
         raise HTTPException(status_code=400, detail="Cannot delete a vehicle with an active booking. Please cancel or complete it first.")
+    
+    # Nullify vehicle_id on historical (completed/cancelled) bookings to avoid FK constraint
+    db.query(Booking).filter(
+        Booking.vehicle_id == vehicle_id,
+        Booking.status.in_([BookingStatus.COMPLETED, BookingStatus.CANCELLED])
+    ).update({Booking.vehicle_id: None}, synchronize_session=False)
     
     db.delete(vehicle)
     db.commit()
@@ -360,28 +392,66 @@ def search_parking(
     # Auto-expire reservations before search
     expire_reservations(db)
     
-    lands = db.query(ParkingLand).filter(ParkingLand.status == "ONLINE").all()
-    # Fetch all ratings in one go to eliminate O(N) N+1 query performance bottleneck
-    land_ids = [land.id for land in lands]
-    ratings = db.query(
-        Booking.land_id,
-        func.avg(Booking.rating).label('avg'),
-        func.count(Booking.rating).label('count')
-    ).filter(
-        Booking.land_id.in_(land_ids), 
-        Booking.rating.isnot(None)
-    ).group_by(Booking.land_id).all()
+    query = db.query(ParkingLand).filter(ParkingLand.status == "ONLINE")
     
-    rating_map = {r.land_id: {"avg": float(r.avg), "count": int(r.count)} for r in ratings}
+    if max_price is not None:
+        query = query.filter(ParkingLand.price_per_hour <= max_price)
+    
+    if required_slots > 1:
+        query = query.filter(ParkingLand.available_slots >= required_slots)
+    else:
+        query = query.filter(ParkingLand.available_slots > 0)
 
+    lands = query.all()
+    
+    # Fetch all ratings and owner phone numbers
+    land_ids = [land.id for land in lands]
+    rating_map = {}
+    owner_phone_map = {}
+    if land_ids:
+        ratings = db.query(
+            Booking.land_id,
+            func.avg(Booking.rating).label('avg'),
+            func.count(Booking.rating).label('count')
+        ).filter(
+            Booking.land_id.in_(land_ids), 
+            Booking.rating.isnot(None)
+        ).group_by(Booking.land_id).all()
+        rating_map = {r.land_id: {"avg": float(r.avg), "count": int(r.count)} for r in ratings}
+        
+        # Get owner phones
+        owners = db.query(User.id, User.phone_no).join(
+            ParkingLand, User.id == ParkingLand.owner_id
+        ).filter(ParkingLand.id.in_(land_ids)).all()
+        owner_phone_map = {o.id: o.phone_no for o in owners}
+    
     results = []
     for land in lands:
+        # Distance Filter
+        dist = None
+        if lat is not None and lng is not None:
+            dist = geodesic((lat, lng), (land.latitude, land.longitude)).km
+            if dist > radius:
+                continue
+        
+        # Vehicle Type Filter
+        if vehicle_type and land.vehicle_types:
+            # Check if requested type is in the allowed types (case-insensitive)
+            allowed_types = [t.lower() for t in land.vehicle_types]
+            if vehicle_type.lower() not in allowed_types:
+                continue
+
         land_dict = {c.name: getattr(land, c.name) for c in land.__table__.columns}
         r_data = rating_map.get(land.id, {"avg": 0.0, "count": 0})
         land_dict["avg_rating"] = r_data["avg"]
         land_dict["review_count"] = r_data["count"]
+        land_dict["owner_phone_no"] = owner_phone_map.get(land.owner_id)
+        # Add distance for potential front-end sorting/display if needed
+        land_dict["computedDistance"] = dist
         results.append(land_dict)
+    
     return results
+
 
 def expire_reservations(db: Session):
     expiry_time = datetime.utcnow() - timedelta(minutes=3)
@@ -601,16 +671,19 @@ def list_customer_bookings(current_user: User = Depends(get_current_user), db: S
     if current_user.role != UserRole.CUSTOMER:
         raise HTTPException(status_code=403, detail="Only customers can view their bookings")
     
-    results = db.query(Booking, ParkingLand.name, ParkingLand.latitude, ParkingLand.longitude).join(
+    results = db.query(Booking, ParkingLand.name, ParkingLand.latitude, ParkingLand.longitude, User.phone_no).join(
         ParkingLand, Booking.land_id == ParkingLand.id
+    ).join(
+        User, User.id == ParkingLand.owner_id
     ).filter(Booking.user_id == current_user.id).order_by(Booking.id.desc()).all()
     
     output = []
-    for booking, name, lat, lng in results:
+    for booking, name, lat, lng, owner_phone_no in results:
         b_dict = {c.name: getattr(booking, c.name) for c in booking.__table__.columns}
         b_dict["land_name"] = name
         b_dict["latitude"] = lat
         b_dict["longitude"] = lng
+        b_dict["owner_phone_no"] = owner_phone_no
         output.append(b_dict)
     return output
 

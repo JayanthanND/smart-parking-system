@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
 const AuthContext = createContext(null);
-export const API_BASE = 'http://127.0.0.1:8000';
+// Pull API URL dynamically from Vite env variables or fallback to local
+export const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -37,9 +38,9 @@ export const AuthProvider = ({ children }) => {
     return access_token;
   };
 
-  const register = async (username, email, password, role) => {
+  const register = async (username, email, password, role, phone_no) => {
     const res = await axios.post(`${API_BASE}/register`, {
-      username, email, password, role
+      username, email, password, role, phone_no
     });
     return res.data;
   };
