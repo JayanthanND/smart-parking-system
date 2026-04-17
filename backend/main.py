@@ -231,7 +231,7 @@ def create_land(land_in: ParkingLandCreate, current_user: User = Depends(get_cur
 def get_owner_lands(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=403, detail="Only owners can view their parking lands")
-    return db.query(ParkingLand).filter(ParkingLand.owner_id == current_user.id).all()
+    return db.query(ParkingLand).filter(ParkingLand.owner_id == current_user.id, ParkingLand.is_active == True).all()
 
 @app.delete("/owner/lands/{land_id}")
 def delete_land(land_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -248,9 +248,14 @@ def delete_land(land_id: int, current_user: User = Depends(get_current_user), db
     if active_booking:
         raise HTTPException(status_code=400, detail="Cannot delete a land area with active reservations or vehicles parked. Please clear the slots first.")
     
-    db.delete(land)
+    # Soft Delete: Keep the land in DB but hide it from active lists
+    land.is_active = False
+    
+    # Clear any active navigation targets for users
+    db.query(User).filter(User.active_nav_land_id == land_id).update({"active_nav_land_id": None, "is_nav_fullscreen": False})
+    
     db.commit()
-    return {"message": "Land area deleted successfully"}
+    return {"message": "Land area removed successfully"}
 
 @app.patch("/owner/lands/{land_id}/status")
 def update_land_status(land_id: int, status: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -392,7 +397,7 @@ def search_parking(
     # Auto-expire reservations before search
     expire_reservations(db)
     
-    query = db.query(ParkingLand).filter(ParkingLand.status == "ONLINE")
+    query = db.query(ParkingLand).filter(ParkingLand.status == "ONLINE", ParkingLand.is_active == True)
     
     if max_price is not None:
         query = query.filter(ParkingLand.price_per_hour <= max_price)

@@ -159,7 +159,9 @@ export default function OwnerPanel() {
     } catch(err) { showSnackbar("Status update failed", "error"); }
   };
 
-  const handleDeleteLand = async (landId, landName) => {
+  const handleDeleteLand = async (e, landId, landName) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!window.confirm(`Are you sure you want to PERMANENTLY delete "${landName}"? This cannot be undone.`)) return;
     
     try {
@@ -290,7 +292,8 @@ export default function OwnerPanel() {
                 <div className="d-flex align-center gap-2">
                   <span className={`card-badge ${land.status === 'ONLINE' ? 'badge-online' : 'badge-offline'}`}>{land.status}</span>
                   <button 
-                    onClick={() => handleDeleteLand(land.id, land.name)}
+                    type="button"
+                    onClick={(e) => handleDeleteLand(e, land.id, land.name)}
                     style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', borderRadius: '4px', transition: '0.2s', display: 'flex', alignItems: 'center' }}
                     onMouseOver={e => e.currentTarget.style.color = '#ef4444'}
                     onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}

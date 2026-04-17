@@ -144,8 +144,8 @@ export default function CustomerPanel() {
               (pos) => {
                 const distanceMoved = calculateDistance(lastUpdateLocRef.current[0], lastUpdateLocRef.current[1], pos.coords.latitude, pos.coords.longitude) * 1000;
                 if (distanceMoved > 5) { // Only update UI if moved > 5 meters
-                    lastUpdateLocRef.current = [pos.coords.latitude, pos.coords.longitude];
-                    setUserLoc([pos.coords.latitude, pos.coords.longitude]);
+                  lastUpdateLocRef.current = [pos.coords.latitude, pos.coords.longitude];
+                  setUserLoc([pos.coords.latitude, pos.coords.longitude]);
                 }
               },
               (err) => console.error(err),
@@ -206,8 +206,8 @@ export default function CustomerPanel() {
       (pos) => {
         const distanceMoved = calculateDistance(lastUpdateLocRef.current[0], lastUpdateLocRef.current[1], pos.coords.latitude, pos.coords.longitude) * 1000;
         if (distanceMoved > 5) {
-            lastUpdateLocRef.current = [pos.coords.latitude, pos.coords.longitude];
-            setUserLoc([pos.coords.latitude, pos.coords.longitude]);
+          lastUpdateLocRef.current = [pos.coords.latitude, pos.coords.longitude];
+          setUserLoc([pos.coords.latitude, pos.coords.longitude]);
         }
       },
       (err) => {
@@ -862,7 +862,7 @@ export default function CustomerPanel() {
                         {isSelected && <CheckCircle size={12} color="white" />}
                       </div>
                       <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-sm)', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         {v.vehicle_type === 'Bike' ? <RotateCcw size={16} color="var(--accent-primary)" /> : <Activity size={16} color="var(--accent-primary)" />}
+                        {v.vehicle_type === 'Bike' ? <RotateCcw size={16} color="var(--accent-primary)" /> : <Activity size={16} color="var(--accent-primary)" />}
                       </div>
                       <div>
                         <div className="d-flex align-center gap-2">
@@ -870,9 +870,9 @@ export default function CustomerPanel() {
                           <span style={{ fontWeight: 700 }}>{v.vehicle_number}</span>
                         </div>
                         {v.vehicle_model && (
-                            <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: '-2px' }}>
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: '-2px' }}>
                             {v.vehicle_model}
-                            </div>
+                          </div>
                         )}
                       </div>
                     </div>

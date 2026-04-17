@@ -47,6 +47,7 @@ class ParkingLand(Base):
     grace_minutes = Column(Integer, default=15)
     boundaries = Column(JSON, nullable=True) # GeoJSON style or array of 4 objects
     image_url = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
     
     
     owner = relationship("User", back_populates="hands", foreign_keys=[owner_id])
