@@ -9,4 +9,5 @@ python-multipart
 geopy
 python-dotenv
 email-validator
-email-validator
+requests
+beautifulsoup4
