@@ -371,6 +371,7 @@ export default function CustomerPanel() {
   };
 
   const handleDeleteVehicle = async (e, vehicleId, vehicleNumber) => {
+    e.preventDefault();
     e.stopPropagation(); // Don't select the vehicle when deleting
     if (!window.confirm(`Are you sure you want to remove ${vehicleNumber} from your fleet?`)) return;
 
@@ -867,6 +868,7 @@ export default function CustomerPanel() {
                     <div className="d-flex align-center gap-2">
                       <span className="card-badge badge-offline" style={{ fontSize: '0.65rem' }}>{v.vehicle_type}</span>
                       <button
+                        type="button"
                         onClick={(e) => handleDeleteVehicle(e, v.id, v.vehicle_number)}
                         style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', borderRadius: '4px', transition: '0.2s', display: 'flex', alignItems: 'center' }}
                         onMouseOver={e => e.currentTarget.style.color = '#ef4444'}
