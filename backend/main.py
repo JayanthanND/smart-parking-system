@@ -242,7 +242,7 @@ def delete_land(land_id: int, current_user: User = Depends(get_current_user), db
     # Check for active bookings
     active_booking = db.query(Booking).filter(
         Booking.land_id == land_id,
-        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.CHECKED_IN])
+        Booking.status.in_([BookingStatus.RESERVED, BookingStatus.ACTIVE])
     ).first()
     
     if active_booking:
