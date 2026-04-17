@@ -251,8 +251,11 @@ def delete_land(land_id: int, current_user: User = Depends(get_current_user), db
     # Soft Delete: Keep the land in DB but hide it from active lists
     land.is_active = False
     
-    # Clear any active navigation targets for users
-    db.query(User).filter(User.active_nav_land_id == land_id).update({"active_nav_land_id": None, "is_nav_fullscreen": False})
+    # Clear any active navigation targets for users navigating to this land
+    affected_users = db.query(User).filter(User.active_nav_land_id == land_id).all()
+    for u in affected_users:
+        u.active_nav_land_id = None
+        u.is_nav_fullscreen = False
     
     db.commit()
     return {"message": "Land area removed successfully"}
