@@ -63,6 +63,7 @@ export default function CustomerPanel() {
   const [filterForm, setFilterForm] = useState({ radius: 1000, vehicle_type: '', max_price: '', intended_duration: 1.0 });
   const [selectedVehicleIds, setSelectedVehicleIds] = useState([]); // Multiple selection
   const [newVehicle, setNewVehicle] = useState({ vehicle_number: '', vehicle_type: 'Car' });
+  const lastUpdateLocRef = useRef([12.9716, 77.5946]); // Throttling GPS updates
 
   const resetFilters = () => {
     setFilterForm({ radius: 1000, vehicle_type: '', max_price: '', intended_duration: 1.0 });
@@ -140,7 +141,13 @@ export default function CustomerPanel() {
             setIsMapFullscreen(user.is_nav_fullscreen);
             // Start tracking automatically
             const id = navigator.geolocation.watchPosition(
-              (pos) => setUserLoc([pos.coords.latitude, pos.coords.longitude]),
+              (pos) => {
+                const distanceMoved = calculateDistance(lastUpdateLocRef.current[0], lastUpdateLocRef.current[1], pos.coords.latitude, pos.coords.longitude) * 1000;
+                if (distanceMoved > 5) { // Only update UI if moved > 5 meters
+                    lastUpdateLocRef.current = [pos.coords.latitude, pos.coords.longitude];
+                    setUserLoc([pos.coords.latitude, pos.coords.longitude]);
+                }
+              },
               (err) => console.error(err),
               { enableHighAccuracy: true }
             );
@@ -197,7 +204,11 @@ export default function CustomerPanel() {
 
     const id = navigator.geolocation.watchPosition(
       (pos) => {
-        setUserLoc([pos.coords.latitude, pos.coords.longitude]);
+        const distanceMoved = calculateDistance(lastUpdateLocRef.current[0], lastUpdateLocRef.current[1], pos.coords.latitude, pos.coords.longitude) * 1000;
+        if (distanceMoved > 5) {
+            lastUpdateLocRef.current = [pos.coords.latitude, pos.coords.longitude];
+            setUserLoc([pos.coords.latitude, pos.coords.longitude]);
+        }
       },
       (err) => {
         console.error("Live tracking error:", err);
@@ -841,7 +852,7 @@ export default function CustomerPanel() {
               </div>
             </div>
 
-            {vehicles.map((v, idx) => {
+            {useMemo(() => vehicles.map((v, idx) => {
               const isSelected = selectedVehicleIds.includes(v.id);
               return (
                 <div key={v.id} onClick={() => toggleVehicleSelection(v.id)} className="glass-card" style={{ padding: '0.75rem', cursor: 'pointer', border: isSelected ? '1px solid var(--status-green)' : '1px solid var(--surface-border)', background: isSelected ? 'rgba(16, 185, 129, 0.1)' : '' }}>
@@ -881,7 +892,7 @@ export default function CustomerPanel() {
                   </div>
                 </div>
               );
-            })}
+            }), [vehicles, selectedVehicleIds])}
           </div>
 
           {/* Add Vehicle Hook */}
