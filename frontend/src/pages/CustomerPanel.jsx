@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { Activity, MapPin, Search, CheckCircle, Navigation, Key, Crosshair, Map as MapIcon, SlidersHorizontal, ArrowUp, ArrowUpRight, ArrowUpLeft, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, RotateCcw, Flag, Maximize, Minimize, Star, X, ShieldCheck, Trash2, Clock, Phone } from 'lucide-react';
