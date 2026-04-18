@@ -10,16 +10,15 @@ def get_real_vehicle_details(vehicle_number):
     """
     vehicle_number = vehicle_number.upper().replace(" ", "")
     url = f"https://www.carinfo.app/rc-details/{vehicle_number}"
-    
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'mac',
-            'desktop': True
-        }
-    )
-    
     try:
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'darwin',
+                'desktop': True
+            }
+        )
+        
         # Step 1: Fetch vehicle details with cloudscraper
         response = scraper.get(url, timeout=15)
         
