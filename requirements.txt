@@ -11,3 +11,4 @@ python-dotenv
 email-validator
 requests
 beautifulsoup4
+cloudscraper
