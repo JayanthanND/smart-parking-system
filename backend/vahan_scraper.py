@@ -11,14 +11,25 @@ def get_real_vehicle_details(vehicle_number):
     url = f"https://www.carinfo.app/rc-details/{vehicle_number}"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.carinfo.app/",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=12)
         if response.status_code != 200:
-            print(f"Scraper received status code {response.status_code} for URL: {url}")
-            return {"error": "SITE_UNAVAILABLE", "status_code": response.status_code}
+            print(f"Scraper blocked or failed (HTTP {response.status_code}) for {vehicle_number}")
+            return {"error": "SITE_BLOCKADE", "status_code": response.status_code}
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -55,14 +66,13 @@ def get_real_vehicle_details(vehicle_number):
         if data["model"] == "Generic Vehicle":
             parts = [p.strip() for p in text_content.split("|") if p.strip()]
             for i, part in enumerate(parts):
-                if "Make & Model" in part and i + 1 < len(parts):
+                p_lower = part.lower()
+                if ("make & model" in p_lower or "model name" in p_lower or "vehicle model" in p_lower) and i + 1 < len(parts):
                     data["model"] = parts[i+1]
-                elif "Owner Name" in part and i + 1 < len(parts):
+                elif ("owner name" in p_lower or "registered owner" in p_lower) and i + 1 < len(parts):
                     data["owner_name"] = parts[i+1]
-                elif "Registered RTO" in part and i + 1 < len(parts):
+                elif "registered rto" in p_lower and i + 1 < len(parts):
                     data["rto"] = parts[i+1]
-                elif "State" in part and i + 1 < len(parts):
-                    data["state"] = parts[i+1]
 
         # Determine vehicle type based on model or keywords
         model_lower = data.get("model", "generic").lower()
