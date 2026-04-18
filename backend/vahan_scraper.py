@@ -9,6 +9,13 @@ def get_real_vehicle_details(vehicle_number):
     """
     vehicle_number = vehicle_number.upper().replace(" ", "")
     url = f"https://www.carinfo.app/rc-details/{vehicle_number}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.carinfo.app/",
+        "Connection": "keep-alive",
+    }
     
     session = requests.Session()
     session.headers.update(headers)
