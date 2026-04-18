@@ -10,23 +10,16 @@ def get_real_vehicle_details(vehicle_number):
     vehicle_number = vehicle_number.upper().replace(" ", "")
     url = f"https://www.carinfo.app/rc-details/{vehicle_number}"
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://www.carinfo.app/",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-    }
+    session = requests.Session()
+    session.headers.update(headers)
     
     try:
-        response = requests.get(url, headers=headers, timeout=12)
+        # Step 1: Visit home page once to establish a real session/cookies
+        session.get("https://www.carinfo.app/", timeout=5)
+        
+        # Step 2: Fetch vehicle details
+        response = session.get(url, timeout=12)
+        
         if response.status_code != 200:
             print(f"Scraper blocked or failed (HTTP {response.status_code}) for {vehicle_number}")
             return {"error": "SITE_BLOCKADE", "status_code": response.status_code}

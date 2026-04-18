@@ -777,13 +777,11 @@ def verify_and_add_vahan(verify_in: VahanVerifyIn, current_user: User = Depends(
         raise HTTPException(status_code=400, detail="Invalid vehicle number. Not found on portal.")
     
     if "error" in details:
-        # Use more descriptive default for failed scrapes
-        v_type = "Car" if len(verify_in.vehicle_number) % 2 == 0 else "Bike"
-        details = {
-            "model": f"Registered Vehicle ({verify_in.vehicle_number})",
-            "vehicle_type": v_type,
-            "owner_name": "Verified Citizen"
-        }
+        # Stop using fallback data to keep dashboard clean
+        raise HTTPException(
+            status_code=503, 
+            detail="Vehicle Registry is currently busy. Please try again in 30 seconds."
+        )
 
     # 3. Create and save vehicle
     new_v = Vehicle(
