@@ -89,6 +89,7 @@ export default function CustomerPanel() {
   const [recentStays, setRecentStays] = useState([]);
   const [sortBy, setSortBy] = useState('distance'); // 'distance' | 'rating' | 'price'
   const [eta, setEta] = useState(null); // Calculated arrival time
+  const [valetSelected, setValetSelected] = useState(false);
 
   const { showSnackbar } = useSnackbar();
 
@@ -109,6 +110,7 @@ export default function CustomerPanel() {
 
   const fetchLandReviews = async (landId) => {
     setLoadingReviews(true);
+    setValetSelected(false); // Reset valet selection when opening new facility
     try {
       const { data } = await authAxios.get(`/lands/${landId}/reviews`);
       setLandReviews(data);
@@ -456,13 +458,17 @@ export default function CustomerPanel() {
     if (selectedVehicleIds.length === 0) return alert("Select at least one vehicle from your fleet.");
     try {
       if (shouldGroup && selectedVehicleIds.length > 1) {
-        const payload = { vehicle_ids: selectedVehicleIds, intended_duration: parseFloat(filterForm.intended_duration) };
+        const payload = { 
+          vehicle_ids: selectedVehicleIds, 
+          intended_duration: parseFloat(filterForm.intended_duration),
+          use_valet: valetSelected 
+        };
         await authAxios.post(`/bookings/reserve-multiple/${landId}`, payload);
         alert(`Unified reservation secured for ${selectedVehicleIds.length} vehicles!`);
       } else {
         // Individual bookings
         await Promise.all(selectedVehicleIds.map(vId =>
-          authAxios.post(`/bookings/reserve/${landId}?vehicle_id=${vId}&intended_duration=${filterForm.intended_duration}`)
+          authAxios.post(`/bookings/reserve/${landId}?vehicle_id=${vId}&intended_duration=${filterForm.intended_duration}&use_valet=${valetSelected}`)
         ));
         alert(selectedVehicleIds.length > 1
           ? `Created ${selectedVehicleIds.length} independent reservations.`
@@ -963,10 +969,42 @@ export default function CustomerPanel() {
               </div>
             </div>
 
+            {/* Valet Service Option (If supported by facility) */}
+            {selectedLand.has_valet && (
+              <div style={{ padding: '0 2rem 1.5rem 2rem' }}>
+                <div 
+                  onClick={() => setValetSelected(!valetSelected)}
+                  className="glass-card d-flex align-center justify-between" 
+                  style={{ 
+                    padding: '1rem', 
+                    cursor: 'pointer',
+                    background: valetSelected ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255,255,255,0.02)',
+                    border: valetSelected ? '1px solid var(--accent-primary)' : '1px solid var(--surface-border)',
+                    transition: '0.2s'
+                  }}
+                >
+                  <div className="d-flex align-center gap-3">
+                    <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-sm)', background: valetSelected ? 'var(--accent-primary)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' }}>
+                      <ShieldCheck size={20} color={valetSelected ? 'white' : 'var(--text-secondary)'} />
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 700, color: valetSelected ? 'var(--accent-primary)' : 'inherit' }}>PREMIUM VALET SERVICE</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {selectedLand.valet_slots_available} valet spots remaining
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid var(--accent-primary)', position: 'relative' }}>
+                    {valetSelected && <div style={{ position: 'absolute', inset: 3, background: 'var(--accent-primary)', borderRadius: '50%' }} />}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Action Bar */}
             <div style={{ padding: '1.5rem 2rem', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-              <button className="btn-action" style={{ flexGrow: 2 }} onClick={() => reserveMultiple(selectedLand.id)}>
-                Secure Space Now (₹{selectedLand.price_per_hour}/hr)
+              <button className="btn-action" style={{ flexGrow: 2, background: valetSelected ? 'var(--status-green)' : 'var(--accent-primary)' }} onClick={() => reserveMultiple(selectedLand.id)}>
+                {valetSelected ? 'Reserve with Valet' : `Secure Space Now (₹${selectedLand.price_per_hour}/hr)`}
               </button>
               <button className="btn-action btn-secondary" title="Navigate" onClick={() => {
                 startLiveTracking({ lat: selectedLand.latitude, lng: selectedLand.longitude, name: selectedLand.name }, selectedLand.id);

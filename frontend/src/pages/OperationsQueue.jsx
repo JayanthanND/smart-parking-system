@@ -159,7 +159,14 @@ export default function OperationsQueue() {
                         >
                           <div className="d-flex justify-between align-center" style={{ padding: '0.4rem', borderRadius: '4px', background: 'rgba(255,255,255,0.03)', overflow: 'hidden' }}>
                             <div className="d-flex flex-column" style={{ overflow: 'hidden', flex: 1 }}>
-                              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><strong>{i.vehicle_number || 'No Plate'}</strong> {i.vehicle_model}</span>
+                              <div className="d-flex align-center gap-2">
+                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><strong>{i.vehicle_number || 'No Plate'}</strong> {i.vehicle_model}</span>
+                                {i.use_valet && (
+                                  <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent-primary)', borderRadius: '4px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                    <ShieldCheck size={10} /> VALET
+                                  </span>
+                                )}
+                              </div>
                               {!group.isGroup && (
                                 <span style={{ fontSize: '0.7rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
                                   <Phone size={10} /> {i.customer_phone_no || "N/A"}

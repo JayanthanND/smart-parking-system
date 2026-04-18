@@ -70,6 +70,7 @@ export default function OwnerPanel() {
   const [landForm, setLandForm] = useState({
     name: '', address: '', latitude: null, longitude: null,
     total_slots: 10, vehicle_types: ['Car', 'Bike'], price_per_hour: 40, penalty_per_hour: 100, grace_minutes: 15,
+    has_valet: false, valet_slots_total: 0,
     boundaries: null
   });
 
@@ -179,8 +180,14 @@ export default function OwnerPanel() {
     const occupied = totalCap - available;
     const occPct = totalCap ? ((occupied / totalCap) * 100) : 0;
     const availPct = totalCap ? ((available / totalCap) * 100) : 0;
+    
+    // Valet Metrics
+    const valetTotal = lands.reduce((acc, l) => acc + (l.valet_slots_total || 0), 0);
+    const valetAvailable = lands.reduce((acc, l) => acc + (l.valet_slots_available || 0), 0);
+    const valetOccupied = valetTotal - valetAvailable;
+    
     const revenue = bookings.filter(b => b.status === "COMPLETED" || b.status === 4).reduce((acc, b) => acc + (b.total_amount || 0), 0);
-    return { totalCap, available, occupied, occPct, availPct, revenue };
+    return { totalCap, available, occupied, occPct, availPct, revenue, valetTotal, valetAvailable, valetOccupied };
   };
 
   const metrics = getMetrics();
@@ -196,7 +203,14 @@ export default function OwnerPanel() {
             </div>
             <div className="text-right">
               <div className="metric-label">Total Occupation</div>
-              <div style={{fontSize: '2rem', fontWeight: 700}}>{metrics.occupied} / {metrics.totalCap} Slots</div>
+              <div style={{ fontSize: '2rem', fontWeight: 800 }}>
+                {metrics.occupied} <span style={{ fontSize: '1.2rem', color: 'var(--text-secondary)' }}>/ {metrics.totalCap} Slots</span>
+              </div>
+              {metrics.valetTotal > 0 && (
+                <div style={{ fontSize: '0.85rem', color: 'var(--accent-primary)', fontWeight: 600, marginTop: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
+                  <ShieldCheck size={14} /> Valet: {metrics.valetOccupied} / {metrics.valetTotal} Occupied
+                </div>
+              )}
             </div>
           </div>
           
@@ -273,6 +287,35 @@ export default function OwnerPanel() {
                   <div className="form-group w-full"><label className="form-label">Base ₹/Hr</label><input type="number" className="form-input" required value={landForm.price_per_hour} onChange={e=>setLandForm({...landForm, price_per_hour: parseFloat(e.target.value)})} /></div>
                   <div className="form-group w-full"><label className="form-label">Grace (min)</label><input type="number" className="form-input" required value={landForm.grace_minutes} onChange={e=>setLandForm({...landForm, grace_minutes: parseInt(e.target.value)})} /></div>
                 </div>
+
+                <div className="d-flex gap-4 p-4 glass-panel mb-4" style={{ background: landForm.has_valet ? 'rgba(99, 102, 241, 0.05)' : 'transparent', border: landForm.has_valet ? '1px solid var(--accent-primary)' : '1px solid var(--surface-border)' }}>
+                  <div className="d-flex align-center gap-3">
+                    <input 
+                      type="checkbox" 
+                      id="has_valet"
+                      style={{ width: 20, height: 20, cursor: 'pointer' }}
+                      checked={landForm.has_valet} 
+                      onChange={e => setLandForm({...landForm, has_valet: e.target.checked, valet_slots_total: e.target.checked ? 2 : 0})} 
+                    />
+                    <label htmlFor="has_valet" className="form-label mb-0" style={{ cursor: 'pointer' }}>
+                      <div className="d-flex align-center gap-2" style={{ fontWeight: 700, color: landForm.has_valet ? 'var(--accent-primary)' : 'inherit' }}>
+                        <ShieldCheck size={18} /> ENABLE VALET SERVICE
+                      </div>
+                    </label>
+                  </div>
+                  {landForm.has_valet && (
+                    <div className="d-flex align-center gap-2" style={{ marginLeft: 'auto' }}>
+                      <label className="form-label mb-0">Valet Slots:</label>
+                      <input 
+                        type="number" 
+                        className="form-input" 
+                        style={{ width: 80 }} 
+                        value={landForm.valet_slots_total} 
+                        onChange={e => setLandForm({...landForm, valet_slots_total: parseInt(e.target.value)})} 
+                      />
+                    </div>
+                  )}
+                </div>
                 
                 <button type="submit" className="btn-action w-full mt-4" disabled={!landForm.boundaries}>Deploy Facility</button>
               </form>
@@ -308,6 +351,12 @@ export default function OwnerPanel() {
                 <div className="mt-4 mb-4" style={{fontSize: '2rem', fontWeight: 800, textAlign: 'center'}}>
                   <span style={{color: land.available_slots === 0 ? 'var(--status-red)' : 'var(--text-primary)'}}>{land.available_slots}</span> <span style={{fontSize: '1rem', color:'var(--text-secondary)'}}>/ {land.total_slots}</span>
                 </div>
+                {land.has_valet && (
+                  <div className="text-center p-2 mb-4" style={{ background: 'rgba(99, 102, 241, 0.1)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                    <ShieldCheck size={14} style={{ marginBottom: -2, marginRight: 4 }} />
+                    Valet: {land.valet_slots_available} / {land.valet_slots_total} available
+                  </div>
+                )}
               </div>
 
               <div className="card-footer">
@@ -329,6 +378,7 @@ export default function OwnerPanel() {
                 <th style={{padding: '0.75rem'}}>Facility</th>
                 <th style={{padding: '0.75rem'}}>Customer Details</th>
                 <th style={{padding: '0.75rem'}}>Vehicle</th>
+                <th style={{padding: '0.75rem'}}>Service</th>
                 <th style={{padding: '0.75rem'}}>Status</th>
                 <th style={{padding: '0.75rem'}}>Total Amt</th>
               </tr>
@@ -360,6 +410,15 @@ export default function OwnerPanel() {
                     <td style={{padding: '0.75rem'}}>
                       <div style={{fontWeight: 600}}>{b.vehicle_number || "N/A"}</div>
                       <div style={{fontSize: '0.8rem', color: 'var(--text-secondary)'}}>{b.vehicle_model}</div>
+                    </td>
+                    <td style={{padding: '0.75rem'}}>
+                      {b.use_valet ? (
+                        <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent-primary)', borderRadius: '4px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                          <ShieldCheck size={10} /> VALET
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Standard</span>
+                      )}
                     </td>
                     <td style={{
                       padding: '0.75rem', 

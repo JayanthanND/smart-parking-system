@@ -63,6 +63,8 @@ class ParkingLandCreate(BaseModel):
     penalty_per_hour: float
     grace_minutes: int = 15
     boundaries: Optional[Any] = None
+    has_valet: bool = False
+    valet_slots_total: int = 0
 
 class NavStateUpdate(BaseModel):
     active_nav_land_id: Optional[int] = None
@@ -86,6 +88,9 @@ class ParkingLandOut(BaseModel):
     review_count: Optional[int] = 0
     image_url: Optional[str] = None
     owner_phone_no: Optional[str] = None
+    has_valet: bool = False
+    valet_slots_total: int = 0
+    valet_slots_available: int = 0
     class Config:
         from_attributes = True
 
@@ -220,6 +225,7 @@ def create_land(land_in: ParkingLandCreate, current_user: User = Depends(get_cur
         **land_in.dict(),
         owner_id=current_user.id,
         available_slots=land_in.total_slots,
+        valet_slots_available=land_in.valet_slots_total,
         status="OFFLINE"
     )
     db.add(db_land)
@@ -473,7 +479,10 @@ def expire_reservations(db: Session):
         # Release the slot
         land = db.query(ParkingLand).filter(ParkingLand.id == booking.land_id).first()
         if land:
-            land.available_slots += 1
+            if booking.use_valet:
+                land.valet_slots_available += 1
+            else:
+                land.available_slots += 1
     db.commit()
 
 @app.post("/bookings/reserve/{land_id}")
@@ -481,6 +490,7 @@ def reserve_slot(
     land_id: int, 
     vehicle_id: int, 
     intended_duration: float = 1.0,
+    use_valet: bool = False,
     current_user: User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
@@ -488,8 +498,15 @@ def reserve_slot(
         raise HTTPException(status_code=403, detail="Only customers can book")
     
     land = db.query(ParkingLand).filter(ParkingLand.id == land_id).first()
-    if not land or land.status != "ONLINE" or land.available_slots <= 0:
-        raise HTTPException(status_code=400, detail="Parking not available")
+    if not land or land.status != "ONLINE":
+        raise HTTPException(status_code=400, detail="Facility is not online")
+        
+    if use_valet:
+        if not land.has_valet or land.valet_slots_available <= 0:
+            raise HTTPException(status_code=400, detail="Valet parking not available or full")
+    else:
+        if land.available_slots <= 0:
+            raise HTTPException(status_code=400, detail="Standard parking full")
     
     # Allow booking if their active booking is for a different vehicle
     active = db.query(Booking).filter(
@@ -505,9 +522,13 @@ def reserve_slot(
         land_id=land_id,
         vehicle_id=vehicle_id,
         status=BookingStatus.RESERVED,
-        intended_duration_hours=intended_duration
+        intended_duration_hours=intended_duration,
+        use_valet=use_valet
     )
-    land.available_slots -= 1
+    if use_valet:
+        land.valet_slots_available -= 1
+    else:
+        land.available_slots -= 1
     db.add(booking)
     db.commit()
     db.refresh(booking)
@@ -516,6 +537,7 @@ def reserve_slot(
 class ReserveMultipleRequest(BaseModel):
     vehicle_ids: List[int]
     intended_duration: float = 1.0
+    use_valet: bool = False
 
 @app.post("/bookings/reserve-multiple/{land_id}")
 def reserve_multiple_slots(
@@ -528,8 +550,15 @@ def reserve_multiple_slots(
         raise HTTPException(status_code=403, detail="Only customers can book")
     
     land = db.query(ParkingLand).filter(ParkingLand.id == land_id).first()
-    if not land or land.status != "ONLINE" or land.available_slots < len(req.vehicle_ids):
-        raise HTTPException(status_code=400, detail="Not enough available slots")
+    if not land or land.status != "ONLINE":
+        raise HTTPException(status_code=400, detail="Facility is not online")
+
+    if req.use_valet:
+        if not land.has_valet or land.valet_slots_available < len(req.vehicle_ids):
+            raise HTTPException(status_code=400, detail="Not enough valet slots available")
+    else:
+        if land.available_slots < len(req.vehicle_ids):
+            raise HTTPException(status_code=400, detail="Not enough standard slots available")
         
     created_bookings = []
     group_id = str(uuid.uuid4()) # Generate a unique group token
@@ -549,12 +578,16 @@ def reserve_multiple_slots(
             vehicle_id=vid,
             status=BookingStatus.RESERVED,
             intended_duration_hours=req.intended_duration,
-            group_id=group_id
+            group_id=group_id,
+            use_valet=req.use_valet
         )
         db.add(b)
         created_bookings.append(b)
         
-    land.available_slots -= len(req.vehicle_ids)
+    if req.use_valet:
+        land.valet_slots_available -= len(req.vehicle_ids)
+    else:
+        land.available_slots -= len(req.vehicle_ids)
     db.commit()
     return [{
         "id": b.id, 
@@ -644,7 +677,10 @@ def pay(booking_id: int, method: str, current_user: User = Depends(get_current_u
     if method == "ONLINE":
         booking.payment_status = "PAID"
         booking.status = BookingStatus.COMPLETED
-        booking.land.available_slots += 1
+        if booking.use_valet:
+            booking.land.valet_slots_available += 1
+        else:
+            booking.land.available_slots += 1
     else:
         # Cash needs owner confirmation
         notification = Notification(
@@ -664,7 +700,10 @@ def confirm_payment(booking_id: int, current_user: User = Depends(get_current_us
     
     booking.payment_status = "PAID"
     booking.status = BookingStatus.COMPLETED
-    booking.land.available_slots += 1
+    if booking.use_valet:
+        booking.land.valet_slots_available += 1
+    else:
+        booking.land.available_slots += 1
     
     notification = Notification(
         user_id=booking.user_id,
@@ -740,7 +779,10 @@ def reject_reservation(booking_id: int, current_user: User = Depends(get_current
         raise HTTPException(status_code=400, detail="Only pending reservations can be rejected")
     
     booking.status = BookingStatus.CANCELLED
-    booking.land.available_slots += 1
+    if booking.use_valet:
+        booking.land.valet_slots_available += 1
+    else:
+        booking.land.available_slots += 1
     
     # Clear user navigation if they were heading to this rejected land
     user = db.query(User).filter(User.id == booking.user_id).first()

@@ -49,6 +49,11 @@ class ParkingLand(Base):
     image_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     
+    # Valet specific
+    has_valet = Column(Boolean, default=False)
+    valet_slots_total = Column(Integer, default=0)
+    valet_slots_available = Column(Integer, default=0)
+    
     
     owner = relationship("User", back_populates="hands", foreign_keys=[owner_id])
     bookings = relationship("Booking", back_populates="land")
@@ -73,6 +78,7 @@ class Booking(Base):
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"))
     status = Column(Enum(BookingStatus), default=BookingStatus.RESERVED)
     intended_duration_hours = Column(Float, default=1.0)
+    use_valet = Column(Boolean, default=False)
     
     reserved_at = Column(DateTime(timezone=True), server_default=func.now())
     checked_in_at = Column(DateTime(timezone=True), nullable=True)
