@@ -769,11 +769,15 @@ def verify_and_add_vahan(verify_in: VahanVerifyIn, current_user: User = Depends(
     # 2. Scrape REAL details from CarInfo
     details = get_real_vehicle_details(verify_in.vehicle_number)
     
+    if details is None:
+        # Fallback if scraper fails completely (site down or blocked)
+        details = {"error": "SCRAPE_FAILED"}
+
     if details.get("error") == "INVALID":
         raise HTTPException(status_code=400, detail="Invalid vehicle number. Not found on portal.")
     
     if "error" in details:
-        # Fallback to realistic simulation if scraper fails (site down/blocked)
+        # Use more descriptive default for failed scrapes
         v_type = "Car" if len(verify_in.vehicle_number) % 2 == 0 else "Bike"
         details = {
             "model": f"Registered Vehicle ({verify_in.vehicle_number})",

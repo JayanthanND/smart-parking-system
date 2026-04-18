@@ -17,7 +17,8 @@ def get_real_vehicle_details(vehicle_number):
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
-            return None
+            print(f"Scraper received status code {response.status_code} for URL: {url}")
+            return {"error": "SITE_UNAVAILABLE", "status_code": response.status_code}
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
